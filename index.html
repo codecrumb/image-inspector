@@ -56,7 +56,7 @@
         </svg>
       </button>
     </div>
-    <p class="text-gray-500 dark:text-gray-400 text-center mb-6 text-sm">Upload an image to inspect its metadata — no data leaves your browser.</p>
+    <p class="text-gray-500 dark:text-gray-400 text-center mb-6 text-sm">Upload an image or video to inspect its metadata — no data leaves your browser.</p>
 
     <!-- Drop Zone -->
     <div
@@ -66,10 +66,10 @@
       <svg class="mx-auto mb-3 w-12 h-12 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
       </svg>
-      <p class="text-gray-500 dark:text-gray-400 text-sm">Drag &amp; drop an image here, or</p>
+      <p class="text-gray-500 dark:text-gray-400 text-sm">Drag &amp; drop an image or video here, or</p>
       <label class="mt-2 inline-block cursor-pointer">
         <span class="mt-2 px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">Browse file</span>
-        <input id="fileInput" type="file" accept="image/*" class="hidden" />
+        <input id="fileInput" type="file" accept="image/*,video/*" class="hidden" />
       </label>
       <p id="pasteHint" class="mt-2 text-xs text-gray-400 dark:text-gray-500"></p>
     </div>
@@ -79,10 +79,12 @@
       <!-- Preview -->
       <div class="flex items-center justify-center bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-700 p-4">
         <img id="preview" class="max-h-48 max-w-full rounded object-contain shadow" alt="Preview" />
+        <canvas id="videoThumb" class="hidden max-h-48 max-w-full rounded object-contain shadow"></canvas>
       </div>
 
       <!-- Stats Grid -->
       <div class="grid grid-cols-2 gap-px bg-gray-200 dark:bg-gray-700">
+        <!-- Always shown -->
         <div class="bg-white dark:bg-gray-800 p-4">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Format</p>
           <p id="stat-format" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
@@ -91,18 +93,35 @@
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">File Size</p>
           <p id="stat-size" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
         </div>
-        <div class="bg-white dark:bg-gray-800 p-4">
+        <div class="bg-white dark:bg-gray-800 p-4 col-span-2">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Resolution</p>
           <p id="stat-resolution" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
         </div>
-        <div class="bg-white dark:bg-gray-800 p-4">
+
+        <!-- Image-only -->
+        <div id="cell-pixels" class="bg-white dark:bg-gray-800 p-4">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Total Pixels</p>
           <p id="stat-pixels" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
         </div>
-        <div class="bg-white dark:bg-gray-800 p-4 col-span-2">
+        <div id="cell-dpi" class="bg-white dark:bg-gray-800 p-4">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">DPI (from metadata)</p>
           <p id="stat-dpi" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
           <p id="stat-dpi-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+
+        <!-- Video-only (hidden by default) -->
+        <div id="cell-duration" class="hidden bg-white dark:bg-gray-800 p-4">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Duration</p>
+          <p id="stat-duration" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+        </div>
+        <div id="cell-bitrate" class="hidden bg-white dark:bg-gray-800 p-4">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Bitrate (est.)</p>
+          <p id="stat-bitrate" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+        </div>
+        <div id="cell-fps" class="hidden bg-white dark:bg-gray-800 p-4 col-span-2">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Frame Rate</p>
+          <p id="stat-fps" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-fps-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
       </div>
     </div>
@@ -140,7 +159,8 @@
       applyTheme(next);
     });
 
-    // Image analysis
+    // ── Shared utilities ──────────────────────────────────────────────────────
+
     function formatBytes(bytes) {
       if (bytes < 1024) return bytes + ' B';
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -153,8 +173,27 @@
         'image/gif': 'GIF', 'image/webp': 'WebP', 'image/bmp': 'BMP',
         'image/tiff': 'TIFF', 'image/svg+xml': 'SVG', 'image/avif': 'AVIF',
         'image/heic': 'HEIC', 'image/heif': 'HEIF',
+        'video/mp4': 'MP4', 'video/quicktime': 'MOV', 'video/webm': 'WebM',
+        'video/x-msvideo': 'AVI', 'video/x-matroska': 'MKV',
+        'video/ogg': 'OGG', 'video/3gpp': '3GP', 'video/x-ms-wmv': 'WMV',
       };
-      return map[mime.toLowerCase()] ?? mime.replace('image/', '').toUpperCase();
+      return map[mime.toLowerCase()] ?? mime.replace(/^(image|video)\//, '').toUpperCase();
+    }
+
+    function formatDuration(s) {
+      if (!isFinite(s) || s < 0) return '—';
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = Math.floor(s % 60);
+      if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+      return `${m}:${String(sec).padStart(2, '0')}`;
+    }
+
+    function formatBitrate(bytes, seconds) {
+      if (!seconds || !isFinite(seconds) || seconds <= 0) return '—';
+      const bps = (bytes * 8) / seconds;
+      if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' Mbps';
+      return Math.round(bps / 1e3) + ' Kbps';
     }
 
     function readUint16BE(view, off) { return view.getUint16(off, false); }
@@ -165,6 +204,8 @@
       for (let i = 0; i < len; i++) s += String.fromCharCode(view.getUint8(offset + i));
       return s;
     }
+
+    // ── Image: DPI parsing ────────────────────────────────────────────────────
 
     function parseJPEGDPI(buffer) {
       const view = new DataView(buffer);
@@ -246,8 +287,91 @@
       return null;
     }
 
+    // ── Video: MP4 frame rate parsing ─────────────────────────────────────────
+
+    function parseMP4FrameRate(buffer) {
+      const view = new DataView(buffer);
+      const len = buffer.byteLength;
+
+      // Walk a flat list of boxes between [offset, end), return the first matching type
+      function findBox(offset, end, type) {
+        while (offset + 8 <= end) {
+          const size = view.getUint32(offset, false);
+          const t = readString(view, offset + 4, 4);
+          if (size < 8 || offset + size > end) break;
+          if (t === type) return { data: offset + 8, end: offset + size };
+          offset += size;
+        }
+        return null;
+      }
+
+      try {
+        const moov = findBox(0, len, 'moov');
+        if (!moov) return null;
+
+        // Walk trak boxes inside moov; find the video track
+        let off = moov.data;
+        while (off + 8 <= moov.end) {
+          const size = view.getUint32(off, false);
+          const type = readString(view, off + 4, 4);
+          if (size < 8) break;
+
+          if (type === 'trak') {
+            const trakData = off + 8, trakEnd = off + size;
+            const mdia = findBox(trakData, trakEnd, 'mdia');
+            if (mdia) {
+              // Confirm this is the video track via hdlr handler_type = 'vide'
+              const hdlr = findBox(mdia.data, mdia.end, 'hdlr');
+              if (hdlr && readString(view, hdlr.data + 8, 4) === 'vide') {
+                // Get timescale from mdhd
+                const mdhd = findBox(mdia.data, mdia.end, 'mdhd');
+                if (mdhd) {
+                  const version = view.getUint8(mdhd.data);
+                  // version 0: creation(4)+modification(4) = 8 bytes before timescale
+                  // version 1: creation(8)+modification(8) = 16 bytes before timescale
+                  const timescaleOff = mdhd.data + 1 + 3 + (version === 1 ? 16 : 8);
+                  const timescale = view.getUint32(timescaleOff, false);
+                  if (!timescale) break;
+
+                  // Get sample_delta from stts (inside minf > stbl)
+                  const minf = findBox(mdia.data, mdia.end, 'minf');
+                  if (minf) {
+                    const stbl = findBox(minf.data, minf.end, 'stbl');
+                    if (stbl) {
+                      const stts = findBox(stbl.data, stbl.end, 'stts');
+                      if (stts) {
+                        // version(1) + flags(3) + entry_count(4) + sample_count(4) + sample_delta(4)
+                        const sampleDelta = view.getUint32(stts.data + 8, false);
+                        if (sampleDelta > 0) {
+                          const fps = timescale / sampleDelta;
+                          // Round to 3 significant figures; common values: 23.976, 24, 25, 29.97, 30, 60
+                          return Math.round(fps * 1000) / 1000;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          off += size;
+        }
+      } catch (_) { /* malformed box — return null */ }
+
+      return null;
+    }
+
+    // ── File routing ──────────────────────────────────────────────────────────
+
     function analyzeFile(file) {
-      if (!file || !file.type.startsWith('image/')) return;
+      if (!file) return;
+      if (file.type.startsWith('image/')) analyzeImage(file);
+      else if (file.type.startsWith('video/')) analyzeVideo(file);
+    }
+
+    // ── Image analysis ────────────────────────────────────────────────────────
+
+    function analyzeImage(file) {
       const reader = new FileReader();
       reader.onload = (e) => {
         const buffer = e.target.result;
@@ -259,7 +383,7 @@
           let dpiInfo = null;
           if (mime === 'image/jpeg' || mime === 'image/jpg') dpiInfo = parseJPEGDPI(buffer);
           else if (mime === 'image/png') dpiInfo = parsePNGDPI(buffer);
-          showResults(file, url, w, h, dpiInfo);
+          showImageResults(file, url, w, h, dpiInfo);
         };
         img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
         img.src = url;
@@ -267,14 +391,28 @@
       reader.readAsArrayBuffer(file);
     }
 
-    function showResults(file, url, w, h, dpiInfo) {
+    function showImageResults(file, url, w, h, dpiInfo) {
+      // Preview: show img, hide canvas
       const preview = document.getElementById('preview');
       if (preview._prevURL) URL.revokeObjectURL(preview._prevURL);
       preview._prevURL = url;
       preview.src = url;
+      preview.classList.remove('hidden');
+      document.getElementById('videoThumb').classList.add('hidden');
+
+      // Toggle cells
+      document.getElementById('cell-pixels').classList.remove('hidden');
+      document.getElementById('cell-dpi').classList.remove('hidden');
+      document.getElementById('cell-duration').classList.add('hidden');
+      document.getElementById('cell-bitrate').classList.add('hidden');
+      document.getElementById('cell-fps').classList.add('hidden');
+
+      // Populate shared stats
       document.getElementById('stat-format').textContent = formatMimeType(file.type);
       document.getElementById('stat-size').textContent = formatBytes(file.size);
       document.getElementById('stat-resolution').textContent = `${w} × ${h} px`;
+
+      // Image-specific stats
       document.getElementById('stat-pixels').textContent = (w * h).toLocaleString() + ' px²';
       const dpiEl = document.getElementById('stat-dpi');
       const dpiNote = document.getElementById('stat-dpi-note');
@@ -288,8 +426,96 @@
         dpiNote.textContent = supported ? 'No DPI metadata found in this file.' : 'DPI metadata parsing not supported for this format.';
         dpiNote.classList.remove('hidden');
       }
+
       document.getElementById('results').classList.remove('hidden');
     }
+
+    // ── Video analysis ────────────────────────────────────────────────────────
+
+    function analyzeVideo(file) {
+      const url = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+
+      video.onloadedmetadata = () => {
+        // Seek to 1s or 10% of duration, whichever is smaller, to grab a representative frame
+        video.currentTime = Math.min(1, video.duration * 0.1);
+      };
+
+      video.onseeked = () => {
+        // Draw frame to canvas thumbnail
+        const canvas = document.getElementById('videoThumb');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+
+        const mime = file.type.toLowerCase();
+        const needsFpsParse = mime === 'video/mp4' || mime === 'video/quicktime';
+
+        if (needsFpsParse) {
+          // Read only the first 5 MB — moov is almost always near the start
+          const chunk = file.slice(0, 5 * 1024 * 1024);
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const fps = parseMP4FrameRate(e.target.result);
+            showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, fps, 'Source: MP4 moov/trak/mdia');
+            URL.revokeObjectURL(url);
+          };
+          reader.onerror = () => {
+            showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, null);
+            URL.revokeObjectURL(url);
+          };
+          reader.readAsArrayBuffer(chunk);
+        } else {
+          showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, null);
+          URL.revokeObjectURL(url);
+        }
+      };
+
+      video.onerror = () => { URL.revokeObjectURL(url); alert('Could not read video.'); };
+      video.src = url;
+    }
+
+    function showVideoResults(file, canvas, w, h, duration, fps, fpsNote) {
+      // Preview: show canvas, hide img
+      const preview = document.getElementById('preview');
+      if (preview._prevURL) { URL.revokeObjectURL(preview._prevURL); preview._prevURL = null; }
+      preview.classList.add('hidden');
+      canvas.classList.remove('hidden');
+
+      // Toggle cells
+      document.getElementById('cell-pixels').classList.add('hidden');
+      document.getElementById('cell-dpi').classList.add('hidden');
+      document.getElementById('cell-duration').classList.remove('hidden');
+      document.getElementById('cell-bitrate').classList.remove('hidden');
+      document.getElementById('cell-fps').classList.remove('hidden');
+
+      // Populate shared stats
+      document.getElementById('stat-format').textContent = formatMimeType(file.type);
+      document.getElementById('stat-size').textContent = formatBytes(file.size);
+      document.getElementById('stat-resolution').textContent = w && h ? `${w} × ${h} px` : '—';
+
+      // Video-specific stats
+      document.getElementById('stat-duration').textContent = formatDuration(duration);
+      document.getElementById('stat-bitrate').textContent = formatBitrate(file.size, duration);
+
+      const fpsEl = document.getElementById('stat-fps');
+      const fpsNoteEl = document.getElementById('stat-fps-note');
+      if (fps !== null) {
+        fpsEl.textContent = fps + ' fps';
+        fpsNoteEl.textContent = fpsNote || '';
+        fpsNoteEl.classList.toggle('hidden', !fpsNote);
+      } else {
+        fpsEl.textContent = '—';
+        fpsNoteEl.textContent = 'Frame rate not available for this format.';
+        fpsNoteEl.classList.remove('hidden');
+      }
+
+      document.getElementById('results').classList.remove('hidden');
+    }
+
+    // ── Input handlers ────────────────────────────────────────────────────────
 
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
