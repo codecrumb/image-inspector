@@ -197,6 +197,15 @@
     </div>
   </div>
 
+  <!-- Full-page drop overlay -->
+  <div id="pageDropOverlay" class="hidden fixed inset-0 z-40 bg-indigo-950/90 flex flex-col items-center justify-center pointer-events-none">
+    <svg class="w-16 h-16 text-indigo-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+    </svg>
+    <p class="text-white text-2xl font-bold mt-4">Drop anywhere</p>
+    <p class="text-indigo-300 text-sm mt-2">Release to analyze your file</p>
+  </div>
+
   <!-- Lightbox -->
   <div id="lightbox" class="hidden fixed inset-0 z-50 bg-black/90 flex items-center justify-center">
     <canvas id="lightboxCanvas" class="max-w-full max-h-full cursor-crosshair"></canvas>
@@ -1019,10 +1028,35 @@
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', () => { if (fileInput.files[0]) analyzeFile(fileInput.files[0]); });
-    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drop-active'); });
-    ['dragleave','dragend'].forEach(ev => dropzone.addEventListener(ev, () => dropzone.classList.remove('drop-active')));
-    dropzone.addEventListener('drop', (e) => { e.preventDefault(); dropzone.classList.remove('drop-active'); const f = e.dataTransfer.files[0]; if (f) analyzeFile(f); });
     dropzone.addEventListener('click', (e) => { if (e.target === fileInput || e.target.closest('label')) return; fileInput.click(); });
+
+    // ── Full-page drag-and-drop ───────────────────────────────────────────────
+    const pageDropOverlay = document.getElementById('pageDropOverlay');
+    let dragDepth = 0;
+
+    document.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragDepth++;
+      pageDropOverlay.classList.remove('hidden');
+      if (e.target === dropzone || dropzone.contains(e.target)) dropzone.classList.add('drop-active');
+    });
+    document.addEventListener('dragleave', () => {
+      dragDepth--;
+      if (dragDepth <= 0) {
+        dragDepth = 0;
+        pageDropOverlay.classList.add('hidden');
+        dropzone.classList.remove('drop-active');
+      }
+    });
+    document.addEventListener('dragover', (e) => e.preventDefault());
+    document.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragDepth = 0;
+      pageDropOverlay.classList.add('hidden');
+      dropzone.classList.remove('drop-active');
+      const f = e.dataTransfer.files[0];
+      if (f) analyzeFile(f);
+    });
     document.addEventListener('paste', (e) => {
       const items = e.clipboardData?.items;
       if (!items) return;
