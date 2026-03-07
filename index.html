@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .drop-active { border-color: #6366f1; background-color: #eef2ff; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-6 font-sans">
+
+  <div class="w-full max-w-2xl">
+    <h1 class="text-3xl font-bold text-gray-800 mb-1 text-center">Image Analyzer</h1>
+    <p class="text-gray-500 text-center mb-6 text-sm">Upload an image to inspect its metadata — no data leaves your browser.</p>
+
+    <!-- Drop Zone -->
+    <div
+      id="dropzone"
+      class="border-2 border-dashed border-gray-300 rounded-2xl bg-white p-10 text-center cursor-pointer transition-colors duration-150 hover:border-indigo-400 hover:bg-indigo-50"
+    >
+      <svg class="mx-auto mb-3 w-12 h-12 text-gray-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+      </svg>
+      <p class="text-gray-500 text-sm">Drag &amp; drop an image here, or</p>
+      <label class="mt-2 inline-block cursor-pointer">
+        <span class="mt-2 px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">Browse file</span>
+        <input id="fileInput" type="file" accept="image/*" class="hidden" />
+      </label>
+      <p class="mt-2 text-xs text-gray-400">or paste an image with Ctrl+V / Cmd+V</p>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="hidden mt-6 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+      <!-- Preview -->
+      <div class="flex items-center justify-center bg-gray-50 border-b border-gray-200 p-4">
+        <img id="preview" class="max-h-48 max-w-full rounded object-contain shadow" alt="Preview" />
+      </div>
+
+      <!-- Stats Grid -->
+      <div class="grid grid-cols-2 gap-px bg-gray-200">
+        <div class="bg-white p-4">
+          <p class="text-xs uppercase tracking-wide text-gray-400 font-semibold mb-1">Format</p>
+          <p id="stat-format" class="text-lg font-semibold text-gray-800">—</p>
+        </div>
+        <div class="bg-white p-4">
+          <p class="text-xs uppercase tracking-wide text-gray-400 font-semibold mb-1">File Size</p>
+          <p id="stat-size" class="text-lg font-semibold text-gray-800">—</p>
+        </div>
+        <div class="bg-white p-4">
+          <p class="text-xs uppercase tracking-wide text-gray-400 font-semibold mb-1">Resolution</p>
+          <p id="stat-resolution" class="text-lg font-semibold text-gray-800">—</p>
+        </div>
+        <div class="bg-white p-4">
+          <p class="text-xs uppercase tracking-wide text-gray-400 font-semibold mb-1">Total Pixels</p>
+          <p id="stat-pixels" class="text-lg font-semibold text-gray-800">—</p>
+        </div>
+        <div class="bg-white p-4 col-span-2">
+          <p class="text-xs uppercase tracking-wide text-gray-400 font-semibold mb-1">DPI (from metadata)</p>
+          <p id="stat-dpi" class="text-lg font-semibold text-gray-800">—</p>
+          <p id="stat-dpi-note" class="text-xs text-gray-400 mt-0.5 hidden"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function formatBytes(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+
+    function formatMimeType(mime) {
+      const map = {
+        'image/jpeg': 'JPEG', 'image/jpg': 'JPEG', 'image/png': 'PNG',
+        'image/gif': 'GIF', 'image/webp': 'WebP', 'image/bmp': 'BMP',
+        'image/tiff': 'TIFF', 'image/svg+xml': 'SVG', 'image/avif': 'AVIF',
+        'image/heic': 'HEIC', 'image/heif': 'HEIF',
+      };
+      return map[mime.toLowerCase()] ?? mime.replace('image/', '').toUpperCase();
+    }
+
+    function readUint16BE(view, off) { return view.getUint16(off, false); }
+    function readUint32BE(view, off) { return view.getUint32(off, false); }
+
+    function readString(view, offset, len) {
+      let s = '';
+      for (let i = 0; i < len; i++) s += String.fromCharCode(view.getUint8(offset + i));
+      return s;
+    }
+
+    function parseJPEGDPI(buffer) {
+      const view = new DataView(buffer);
+      if (buffer.byteLength < 4 || readUint16BE(view, 0) !== 0xFFD8) return null;
+      let offset = 2;
+      while (offset + 4 <= buffer.byteLength) {
+        if (view.getUint8(offset) !== 0xFF) break;
+        const marker = readUint16BE(view, offset);
+        if (marker === 0xFFD9 || marker === 0xFFDA) break;
+        if (marker === 0xFFD8 || (marker >= 0xFFD0 && marker <= 0xFFD7)) { offset += 2; continue; }
+        const segLen = readUint16BE(view, offset + 2);
+        const segStart = offset + 4;
+        if (marker === 0xFFE0) {
+          const id = readString(view, segStart, 5);
+          if (id === 'JFIF\0') {
+            const units = view.getUint8(segStart + 7);
+            const xd = readUint16BE(view, segStart + 8);
+            const yd = readUint16BE(view, segStart + 10);
+            if (xd > 0 || yd > 0) {
+              if (units === 1) return { label: `${xd} × ${yd} DPI`, note: 'Source: JFIF APP0' };
+              if (units === 2) return { label: `${Math.round(xd*2.54)} × ${Math.round(yd*2.54)} DPI`, note: 'Source: JFIF APP0 (converted from DPCM)' };
+              return { label: `${xd} × ${yd} (no unit)`, note: 'Source: JFIF APP0 — unit unspecified' };
+            }
+          }
+        } else if (marker === 0xFFE1) {
+          const id = readString(view, segStart, 6);
+          if (id === 'Exif\0\0') { const r = parseEXIF(buffer, segStart + 6); if (r) return r; }
+        }
+        offset += 2 + segLen;
+      }
+      return null;
+    }
+
+    function parseEXIF(buffer, tiffBase) {
+      const view = new DataView(buffer);
+      if (tiffBase + 8 > buffer.byteLength) return null;
+      const order = readString(view, tiffBase, 2);
+      const le = order === 'II';
+      const r16 = (off) => view.getUint16(tiffBase + off, le);
+      const r32 = (off) => view.getUint32(tiffBase + off, le);
+      const rRational = (off) => { const n = view.getUint32(tiffBase+off,le), d = view.getUint32(tiffBase+off+4,le); return d===0?0:n/d; };
+      if (r16(2) !== 42) return null;
+      const ifdOffset = r32(4);
+      const entryCount = r16(ifdOffset);
+      let xRes = null, yRes = null, unit = 2;
+      for (let i = 0; i < entryCount; i++) {
+        const entryOff = ifdOffset + 2 + i * 12;
+        if (entryOff + 12 > buffer.byteLength - tiffBase) break;
+        const tag = r16(entryOff), valOff = entryOff + 8;
+        if (tag === 0x011A) xRes = rRational(r32(valOff));
+        else if (tag === 0x011B) yRes = rRational(r32(valOff));
+        else if (tag === 0x0128) unit = r16(valOff);
+      }
+      if (xRes !== null && yRes !== null && (xRes > 0 || yRes > 0)) {
+        if (unit === 2) return { label: `${Math.round(xRes)} × ${Math.round(yRes)} DPI`, note: 'Source: EXIF IFD0' };
+        if (unit === 3) return { label: `${Math.round(xRes*2.54)} × ${Math.round(yRes*2.54)} DPI`, note: 'Source: EXIF IFD0 (converted from DPCM)' };
+        return { label: `${Math.round(xRes)} × ${Math.round(yRes)} (no unit)`, note: 'Source: EXIF IFD0 — unit unspecified' };
+      }
+      return null;
+    }
+
+    function parsePNGDPI(buffer) {
+      const view = new DataView(buffer);
+      let offset = 8;
+      while (offset + 12 <= buffer.byteLength) {
+        const length = view.getUint32(offset, false);
+        const type = readString(view, offset + 4, 4);
+        const dataOffset = offset + 8;
+        if (type === 'pHYs') {
+          const ppuX = view.getUint32(dataOffset, false);
+          const ppuY = view.getUint32(dataOffset + 4, false);
+          const unit = view.getUint8(dataOffset + 8);
+          if (unit === 1) return { label: `${Math.round(ppuX*0.0254)} × ${Math.round(ppuY*0.0254)} DPI`, note: 'Source: PNG pHYs chunk (converted from px/m)' };
+          return { label: `${ppuX} × ${ppuY} (aspect only, no unit)`, note: 'Source: PNG pHYs chunk — unit unknown' };
+        }
+        if (type === 'IDAT' || type === 'IEND') break;
+        offset += 12 + length;
+      }
+      return null;
+    }
+
+    function analyzeFile(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const buffer = e.target.result;
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          const w = img.naturalWidth, h = img.naturalHeight;
+          const mime = file.type.toLowerCase();
+          let dpiInfo = null;
+          if (mime === 'image/jpeg' || mime === 'image/jpg') dpiInfo = parseJPEGDPI(buffer);
+          else if (mime === 'image/png') dpiInfo = parsePNGDPI(buffer);
+          showResults(file, url, w, h, dpiInfo);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
+        img.src = url;
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function showResults(file, url, w, h, dpiInfo) {
+      const preview = document.getElementById('preview');
+      if (preview._prevURL) URL.revokeObjectURL(preview._prevURL);
+      preview._prevURL = url;
+      preview.src = url;
+      document.getElementById('stat-format').textContent = formatMimeType(file.type);
+      document.getElementById('stat-size').textContent = formatBytes(file.size);
+      document.getElementById('stat-resolution').textContent = `${w} × ${h} px`;
+      document.getElementById('stat-pixels').textContent = (w * h).toLocaleString() + ' px²';
+      const dpiEl = document.getElementById('stat-dpi');
+      const dpiNote = document.getElementById('stat-dpi-note');
+      if (dpiInfo) {
+        dpiEl.textContent = dpiInfo.label;
+        dpiNote.textContent = dpiInfo.note || '';
+        dpiNote.classList.toggle('hidden', !dpiInfo.note);
+      } else {
+        const supported = ['image/jpeg','image/jpg','image/png'].includes(file.type.toLowerCase());
+        dpiEl.textContent = 'Not embedded';
+        dpiNote.textContent = supported ? 'No DPI metadata found in this file.' : 'DPI metadata parsing not supported for this format.';
+        dpiNote.classList.remove('hidden');
+      }
+      document.getElementById('results').classList.remove('hidden');
+    }
+
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) analyzeFile(fileInput.files[0]); });
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drop-active'); });
+    ['dragleave','dragend'].forEach(ev => dropzone.addEventListener(ev, () => dropzone.classList.remove('drop-active')));
+    dropzone.addEventListener('drop', (e) => { e.preventDefault(); dropzone.classList.remove('drop-active'); const f = e.dataTransfer.files[0]; if (f) analyzeFile(f); });
+    dropzone.addEventListener('click', (e) => { if (e.target === fileInput || e.target.closest('label')) return; fileInput.click(); });
+    document.addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) { if (item.kind === 'file' && item.type.startsWith('image/')) { analyzeFile(item.getAsFile()); break; } }
+    });
+  </script>
+</body>
+</html>
+
