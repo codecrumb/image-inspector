@@ -64,7 +64,7 @@
         <span class="mt-2 px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">Browse file</span>
         <input id="fileInput" type="file" accept="image/*" class="hidden" />
       </label>
-      <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">or paste an image with Ctrl+V / Cmd+V</p>
+      <p id="pasteHint" class="mt-2 text-xs text-gray-400 dark:text-gray-500"></p>
     </div>
 
     <!-- Results -->
@@ -102,6 +102,16 @@
   </div>
 
   <script>
+    // Paste hint
+    const ua = navigator.userAgent;
+    const isIPhone = /iPhone|iPod/.test(ua);
+    const isIPad = /iPad/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1);
+    const isMac = /Mac/.test(ua) && !isIPad;
+    const pasteHint = document.getElementById('pasteHint');
+    if (!isIPhone) {
+      pasteHint.textContent = 'or paste an image with ' + (isMac || isIPad ? 'Cmd+V' : 'Ctrl+V');
+    }
+
     // Theme toggle
     const toggle = document.getElementById('themeToggle');
     const iconSun = document.getElementById('iconSun');
