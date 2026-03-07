@@ -845,9 +845,13 @@
       for (const [label, val] of rows) {
         const row = document.createElement('div');
         row.className = 'flex justify-between py-1.5 text-sm';
+        const isGPS = label === 'GPS';
+        const valueHTML = isGPS
+          ? `<a href="https://www.google.com/maps?q=${encodeURIComponent(val)}" target="_blank" rel="noopener noreferrer" class="text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300 text-right break-all underline underline-offset-2">${val}</a>`
+          : `<span class="text-gray-800 dark:text-gray-200 text-right break-all">${val}</span>`;
         row.innerHTML = `
           <span class="text-gray-400 dark:text-gray-500 font-medium shrink-0 pr-4">${label}</span>
-          <span class="text-gray-800 dark:text-gray-200 text-right break-all">${val}</span>
+          ${valueHTML}
         `;
         rowsEl.appendChild(row);
       }
