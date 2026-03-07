@@ -17,6 +17,11 @@
       }
     })();
   </script>
+  <!-- Instant background before Tailwind CDN loads — prevents flash -->
+  <style>
+    html { background-color: #f3f4f6; }
+    html.dark { background-color: #111827; }
+  </style>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = { darkMode: 'class' }</script>
   <style>
