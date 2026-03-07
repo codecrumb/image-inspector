@@ -35,7 +35,6 @@
     .drop-active { border-color: #6366f1; background-color: #eef2ff; }
     .dark .drop-active { border-color: #818cf8; background-color: #1e1b4b; }
 
-    /* Click-to-copy feedback */
     @keyframes cellFlashLight {
       0%   { background-color: #ffffff; }
       25%  { background-color: #d1fae5; }
@@ -70,6 +69,9 @@
       animation: tipFade 1.1s ease forwards;
     }
     .dark .copy-tip { background: #f9fafb; color: #111827; }
+
+    #exifChevron { transition: transform 0.2s ease; }
+    #exifChevron.open { transform: rotate(180deg); }
   </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 min-h-screen flex flex-col items-center justify-center p-6 font-sans transition-colors duration-150">
@@ -110,15 +112,15 @@
 
     <!-- Results -->
     <div id="results" class="hidden mt-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+
       <!-- Preview -->
       <div class="flex items-center justify-center bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-700 p-4">
         <img id="preview" class="max-h-48 max-w-full rounded object-contain shadow" alt="Preview" />
         <canvas id="videoThumb" class="hidden max-h-48 max-w-full rounded object-contain shadow"></canvas>
       </div>
 
-      <!-- Stats Grid — click any cell to copy its value -->
+      <!-- Stats Grid -->
       <div id="statsGrid" class="grid grid-cols-2 gap-px bg-gray-200 dark:bg-gray-700">
-
         <!-- Always shown -->
         <div data-copyid="stat-format" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Format</p>
@@ -163,13 +165,39 @@
           <p id="stat-fps" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
           <p id="stat-fps-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
-
       </div>
+
+      <!-- Color Palette -->
+      <div id="paletteSection" class="hidden border-t border-gray-200 dark:border-gray-700 p-4">
+        <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-3">Color Palette</p>
+        <div id="paletteSwatches" class="flex gap-3 flex-wrap"></div>
+      </div>
+
+      <!-- EXIF Data (collapsible, images only) -->
+      <div id="exifSection" class="hidden border-t border-gray-200 dark:border-gray-700">
+        <button id="exifToggle" class="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">EXIF Data</p>
+          <svg id="exifChevron" class="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        <div id="exifContent" class="hidden px-4 pb-4">
+          <div id="exifRows" class="divide-y divide-gray-100 dark:divide-gray-700"></div>
+        </div>
+      </div>
+
+      <!-- Export -->
+      <div class="border-t border-gray-200 dark:border-gray-700 p-4">
+        <button id="exportBtn" class="relative w-full py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+          Copy Summary
+        </button>
+      </div>
+
     </div>
   </div>
 
   <script>
-    // Paste hint
+    // ── Platform / paste hint ─────────────────────────────────────────────────
     const ua = navigator.userAgent;
     const isIPhone = /iPhone|iPod/.test(ua);
     const isIPad = /iPad/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1);
@@ -179,7 +207,7 @@
       pasteHint.textContent = 'or paste an image with ' + (isMac || isIPad ? 'Cmd+V' : 'Ctrl+V');
     }
 
-    // Theme toggle
+    // ── Theme toggle ──────────────────────────────────────────────────────────
     const toggle = document.getElementById('themeToggle');
     const iconSun = document.getElementById('iconSun');
     const iconMoon = document.getElementById('iconMoon');
@@ -190,18 +218,31 @@
       iconSun.classList.toggle('hidden', !isDark);
       iconMoon.classList.toggle('hidden', isDark);
     }
-
     applyTheme(localStorage.getItem('theme') || 'light');
-
     toggle.addEventListener('click', () => {
-      const isDark = document.documentElement.classList.contains('dark');
-      const next = isDark ? 'light' : 'dark';
+      const next = document.documentElement.classList.contains('dark') ? 'light' : 'dark';
       localStorage.setItem('theme', next);
       applyTheme(next);
     });
 
-    // ── Click-to-copy ─────────────────────────────────────────────────────────
+    // ── Copy feedback helper ──────────────────────────────────────────────────
+    function showCopyFeedback(el, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        el.classList.remove('copy-flash');
+        void el.offsetWidth;
+        el.classList.add('copy-flash');
+        el.addEventListener('animationend', () => el.classList.remove('copy-flash'), { once: true });
+        const old = el.querySelector('.copy-tip');
+        if (old) old.remove();
+        const tip = document.createElement('span');
+        tip.className = 'copy-tip';
+        tip.textContent = 'Copied!';
+        el.appendChild(tip);
+        setTimeout(() => tip.remove(), 1200);
+      });
+    }
 
+    // ── Click-to-copy stat cells ──────────────────────────────────────────────
     document.getElementById('statsGrid').addEventListener('click', (e) => {
       const cell = e.target.closest('[data-copyid]');
       if (!cell) return;
@@ -209,31 +250,14 @@
       if (!statEl) return;
       const text = statEl.textContent.trim();
       if (!text || text === '—') return;
-
-      navigator.clipboard.writeText(text).then(() => {
-        // Flash animation
-        cell.classList.remove('copy-flash');
-        void cell.offsetWidth; // force reflow to restart animation
-        cell.classList.add('copy-flash');
-        cell.addEventListener('animationend', () => cell.classList.remove('copy-flash'), { once: true });
-
-        // Tooltip
-        const existing = cell.querySelector('.copy-tip');
-        if (existing) existing.remove();
-        const tip = document.createElement('span');
-        tip.className = 'copy-tip';
-        tip.textContent = 'Copied!';
-        cell.appendChild(tip);
-        setTimeout(() => tip.remove(), 1200);
-      });
+      showCopyFeedback(cell, text);
     });
 
     // ── Shared utilities ──────────────────────────────────────────────────────
-
-    function formatBytes(bytes) {
-      if (bytes < 1024) return bytes + ' B';
-      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-      return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    function formatBytes(b) {
+      if (b < 1024) return b + ' B';
+      if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+      return (b / (1024 * 1024)).toFixed(2) + ' MB';
     }
 
     function formatMimeType(mime) {
@@ -251,26 +275,22 @@
 
     function formatDuration(s) {
       if (!isFinite(s) || s < 0) return '—';
-      const h = Math.floor(s / 3600);
-      const m = Math.floor((s % 3600) / 60);
-      const sec = Math.floor(s % 60);
-      if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-      return `${m}:${String(sec).padStart(2, '0')}`;
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+      if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+      return `${m}:${String(sec).padStart(2,'0')}`;
     }
 
     function formatBitrate(bytes, seconds) {
       if (!seconds || !isFinite(seconds) || seconds <= 0) return '—';
       const bps = (bytes * 8) / seconds;
-      if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' Mbps';
-      return Math.round(bps / 1e3) + ' Kbps';
+      return bps >= 1e6 ? (bps / 1e6).toFixed(1) + ' Mbps' : Math.round(bps / 1e3) + ' Kbps';
     }
 
     function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
-
     function aspectRatio(w, h) {
       if (!w || !h) return '—';
       const d = gcd(w, h);
-      return `${w / d}:${h / d}`;
+      return `${w/d}:${h/d}`;
     }
 
     function formatMegapixels(w, h) {
@@ -281,16 +301,13 @@
     }
 
     function readUint16BE(view, off) { return view.getUint16(off, false); }
-    function readUint32BE(view, off) { return view.getUint32(off, false); }
-
     function readString(view, offset, len) {
       let s = '';
       for (let i = 0; i < len; i++) s += String.fromCharCode(view.getUint8(offset + i));
       return s;
     }
 
-    // ── Image: DPI parsing ────────────────────────────────────────────────────
-
+    // ── Image DPI parsers (unchanged) ─────────────────────────────────────────
     function parseJPEGDPI(buffer) {
       const view = new DataView(buffer);
       if (buffer.byteLength < 4 || readUint16BE(view, 0) !== 0xFFD8) return null;
@@ -316,31 +333,30 @@
           }
         } else if (marker === 0xFFE1) {
           const id = readString(view, segStart, 6);
-          if (id === 'Exif\0\0') { const r = parseEXIF(buffer, segStart + 6); if (r) return r; }
+          if (id === 'Exif\0\0') { const r = parseEXIFDPI(buffer, segStart + 6); if (r) return r; }
         }
         offset += 2 + segLen;
       }
       return null;
     }
 
-    function parseEXIF(buffer, tiffBase) {
+    function parseEXIFDPI(buffer, tiffBase) {
       const view = new DataView(buffer);
       if (tiffBase + 8 > buffer.byteLength) return null;
-      const order = readString(view, tiffBase, 2);
-      const le = order === 'II';
+      const le = readString(view, tiffBase, 2) === 'II';
       const r16 = (off) => view.getUint16(tiffBase + off, le);
       const r32 = (off) => view.getUint32(tiffBase + off, le);
-      const rRational = (off) => { const n = view.getUint32(tiffBase+off,le), d = view.getUint32(tiffBase+off+4,le); return d===0?0:n/d; };
+      const rRat = (off) => { const n = view.getUint32(tiffBase+off,le), d = view.getUint32(tiffBase+off+4,le); return d===0?0:n/d; };
       if (r16(2) !== 42) return null;
       const ifdOffset = r32(4);
-      const entryCount = r16(ifdOffset);
+      const count = r16(ifdOffset);
       let xRes = null, yRes = null, unit = 2;
-      for (let i = 0; i < entryCount; i++) {
-        const entryOff = ifdOffset + 2 + i * 12;
-        if (entryOff + 12 > buffer.byteLength - tiffBase) break;
-        const tag = r16(entryOff), valOff = entryOff + 8;
-        if (tag === 0x011A) xRes = rRational(r32(valOff));
-        else if (tag === 0x011B) yRes = rRational(r32(valOff));
+      for (let i = 0; i < count; i++) {
+        const e = ifdOffset + 2 + i * 12;
+        if (e + 12 > buffer.byteLength - tiffBase) break;
+        const tag = r16(e), valOff = e + 8;
+        if (tag === 0x011A) xRes = rRat(r32(valOff));
+        else if (tag === 0x011B) yRes = rRat(r32(valOff));
         else if (tag === 0x0128) unit = r16(valOff);
       }
       if (xRes !== null && yRes !== null && (xRes > 0 || yRes > 0)) {
@@ -357,11 +373,10 @@
       while (offset + 12 <= buffer.byteLength) {
         const length = view.getUint32(offset, false);
         const type = readString(view, offset + 4, 4);
-        const dataOffset = offset + 8;
+        const d = offset + 8;
         if (type === 'pHYs') {
-          const ppuX = view.getUint32(dataOffset, false);
-          const ppuY = view.getUint32(dataOffset + 4, false);
-          const unit = view.getUint8(dataOffset + 8);
+          const ppuX = view.getUint32(d, false), ppuY = view.getUint32(d+4, false);
+          const unit = view.getUint8(d+8);
           if (unit === 1) return { label: `${Math.round(ppuX*0.0254)} × ${Math.round(ppuY*0.0254)} DPI`, note: 'Source: PNG pHYs chunk (converted from px/m)' };
           return { label: `${ppuX} × ${ppuY} (aspect only, no unit)`, note: 'Source: PNG pHYs chunk — unit unknown' };
         }
@@ -371,12 +386,206 @@
       return null;
     }
 
-    // ── Video: MP4 frame rate parsing ─────────────────────────────────────────
+    // ── Full EXIF parser ──────────────────────────────────────────────────────
+    function findJPEGEXIFBase(buffer) {
+      const view = new DataView(buffer);
+      if (buffer.byteLength < 4 || readUint16BE(view, 0) !== 0xFFD8) return null;
+      let offset = 2;
+      while (offset + 4 <= buffer.byteLength) {
+        if (view.getUint8(offset) !== 0xFF) break;
+        const marker = readUint16BE(view, offset);
+        if (marker === 0xFFD9 || marker === 0xFFDA) break;
+        if (marker === 0xFFD8 || (marker >= 0xFFD0 && marker <= 0xFFD7)) { offset += 2; continue; }
+        const segLen = readUint16BE(view, offset + 2);
+        const segStart = offset + 4;
+        if (marker === 0xFFE1 && readString(view, segStart, 6) === 'Exif\0\0') return segStart + 6;
+        offset += 2 + segLen;
+      }
+      return null;
+    }
 
+    function parseEXIFFull(buffer, tiffBase) {
+      const view = new DataView(buffer);
+      if (tiffBase + 8 > buffer.byteLength) return null;
+      const le = readString(view, tiffBase, 2) === 'II';
+
+      const r8  = (off) => view.getUint8(tiffBase + off);
+      const r16 = (off) => view.getUint16(tiffBase + off, le);
+      const r32 = (off) => view.getUint32(tiffBase + off, le);
+      if (r16(2) !== 42) return null;
+
+      const TYPE_SIZE = [0,1,1,2,4,8,1,1,2,4,8,4,8];
+
+      function readVal(type, count, valOff) {
+        if (type < 1 || type > 12) return null;
+        const tsize = TYPE_SIZE[type];
+        const totalSize = tsize * count;
+        const dataOff = totalSize <= 4 ? valOff : r32(valOff);
+
+        if (type === 2) { // ASCII
+          let s = '';
+          for (let i = 0; i < count; i++) {
+            const c = view.getUint8(tiffBase + dataOff + i);
+            if (c === 0) break;
+            s += String.fromCharCode(c);
+          }
+          return s.trim() || null;
+        }
+        if (type === 3) { // SHORT
+          if (count === 1) return view.getUint16(tiffBase + dataOff, le);
+          const a = [];
+          for (let i = 0; i < count; i++) a.push(view.getUint16(tiffBase + dataOff + i*2, le));
+          return a;
+        }
+        if (type === 4) { // LONG
+          if (count === 1) return view.getUint32(tiffBase + dataOff, le);
+          const a = [];
+          for (let i = 0; i < count; i++) a.push(view.getUint32(tiffBase + dataOff + i*4, le));
+          return a;
+        }
+        if (type === 5) { // RATIONAL
+          const a = [];
+          for (let i = 0; i < count; i++) {
+            const n = view.getUint32(tiffBase + dataOff + i*8, le);
+            const d = view.getUint32(tiffBase + dataOff + i*8 + 4, le);
+            a.push(d === 0 ? 0 : n / d);
+          }
+          return count === 1 ? a[0] : a;
+        }
+        if (type === 9) return view.getInt32(tiffBase + dataOff, le);
+        if (type === 10) { // SRATIONAL
+          const n = view.getInt32(tiffBase + dataOff, le);
+          const d = view.getInt32(tiffBase + dataOff + 4, le);
+          return d === 0 ? 0 : n / d;
+        }
+        return null;
+      }
+
+      function readIFD(ifdOff) {
+        const tags = {};
+        if (ifdOff + 2 > buffer.byteLength - tiffBase) return tags;
+        const count = r16(ifdOff);
+        for (let i = 0; i < count; i++) {
+          const e = ifdOff + 2 + i * 12;
+          if (e + 12 > buffer.byteLength - tiffBase) break;
+          const tag  = r16(e);
+          const type = r16(e + 2);
+          const cnt  = r32(e + 4);
+          try { const v = readVal(type, cnt, e + 8); if (v !== null) tags[tag] = v; } catch (_) {}
+        }
+        return tags;
+      }
+
+      const ifd0 = readIFD(r32(4));
+      const exifIfd = ifd0[0x8769] ? readIFD(ifd0[0x8769]) : {};
+      const gpsIfd  = ifd0[0x8825] ? readIFD(ifd0[0x8825]) : {};
+      return { ifd0, exifIfd, gpsIfd };
+    }
+
+    function buildExifRows({ ifd0, exifIfd, gpsIfd }) {
+      const rows = [];
+      const add = (label, val) => { if (val != null && val !== '') rows.push([label, String(val)]); };
+
+      // Camera
+      const make  = ifd0[0x010F];
+      const model = ifd0[0x0110];
+      if (make || model) add('Camera', [make, model].filter(Boolean).join(' '));
+
+      // Dates
+      const dateOrig = exifIfd[0x9003] || ifd0[0x0132];
+      if (dateOrig) add('Date Taken', String(dateOrig).replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3'));
+
+      // Exposure triangle
+      const expTime = exifIfd[0x829A];
+      const fNum    = exifIfd[0x829D];
+      const iso     = exifIfd[0x8827];
+      if (expTime != null || fNum != null || iso != null) {
+        const parts = [];
+        if (expTime != null) parts.push(expTime < 1 ? `1/${Math.round(1/expTime)}s` : `${expTime.toFixed(1)}s`);
+        if (fNum    != null) parts.push(`f/${(typeof fNum === 'number' ? fNum : fNum[0]).toFixed(1)}`);
+        if (iso     != null) parts.push(`ISO ${Array.isArray(iso) ? iso[0] : iso}`);
+        add('Exposure', parts.join('  '));
+      }
+
+      // Focal length
+      const fl   = exifIfd[0x920A];
+      const fl35 = exifIfd[0xA405];
+      if (fl != null) add('Focal Length', `${(typeof fl === 'number' ? fl : fl[0]).toFixed(1)}mm` + (fl35 ? ` (${fl35}mm equiv.)` : ''));
+
+      // Flash
+      const flash = exifIfd[0x9209];
+      if (flash != null) add('Flash', (flash & 1) ? 'Fired' : 'Did not fire');
+
+      // White balance
+      const wb = exifIfd[0xA403];
+      if (wb != null) add('White Balance', wb === 0 ? 'Auto' : 'Manual');
+
+      // Metering
+      const metering = { 0:'Unknown',1:'Average',2:'Center-weighted',3:'Spot',4:'Multi-spot',5:'Multi-segment',6:'Partial' };
+      const met = exifIfd[0x9207];
+      if (met != null && metering[met]) add('Metering', metering[met]);
+
+      // Color space
+      const cs = exifIfd[0xA001];
+      if (cs != null) add('Color Space', cs === 1 ? 'sRGB' : cs === 0xFFFF ? 'Uncalibrated' : `${cs}`);
+
+      // Software / Artist / Copyright
+      if (ifd0[0x0131]) add('Software',  ifd0[0x0131]);
+      if (ifd0[0x013B]) add('Artist',    ifd0[0x013B]);
+      if (ifd0[0x8298]) add('Copyright', ifd0[0x8298]);
+
+      // GPS
+      if (gpsIfd[0x0001] && gpsIfd[0x0002] && gpsIfd[0x0003] && gpsIfd[0x0004]) {
+        const latRef = gpsIfd[0x0001], lat = gpsIfd[0x0002];
+        const lonRef = gpsIfd[0x0003], lon = gpsIfd[0x0004];
+        if (Array.isArray(lat) && Array.isArray(lon)) {
+          const latDec = (lat[0] + lat[1]/60 + lat[2]/3600) * (latRef === 'S' ? -1 : 1);
+          const lonDec = (lon[0] + lon[1]/60 + lon[2]/3600) * (lonRef === 'W' ? -1 : 1);
+          add('GPS', `${latDec.toFixed(6)}, ${lonDec.toFixed(6)}`);
+        }
+      }
+
+      return rows;
+    }
+
+    // ── Color palette extraction ───────────────────────────────────────────────
+    function extractPalette(sourceCanvas, count = 6) {
+      try {
+        const SIZE = 150;
+        const off = document.createElement('canvas');
+        off.width = SIZE; off.height = SIZE;
+        off.getContext('2d').drawImage(sourceCanvas, 0, 0, SIZE, SIZE);
+        const data = off.getContext('2d').getImageData(0, 0, SIZE, SIZE).data;
+
+        // Quantize to 5 bits per channel, count frequencies
+        const freq = {};
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i+3] < 128) continue; // skip transparent
+          const key = ((data[i] >> 3) << 10) | ((data[i+1] >> 3) << 5) | (data[i+2] >> 3);
+          freq[key] = (freq[key] || 0) + 1;
+        }
+
+        const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
+        const palette = [];
+        for (const [keyStr] of sorted) {
+          if (palette.length >= count) break;
+          const key = parseInt(keyStr);
+          const r = ((key >> 10) & 31) << 3;
+          const g = ((key >>  5) & 31) << 3;
+          const b = ( key        & 31) << 3;
+          // Skip if too visually similar to an already-chosen color
+          if (palette.some(([pr,pg,pb]) => Math.hypot(r-pr, g-pg, b-pb) < 60)) continue;
+          palette.push([r, g, b]);
+        }
+
+        return palette.map(([r,g,b]) => '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join(''));
+      } catch (_) { return []; }
+    }
+
+    // ── MP4 frame rate parser (unchanged) ─────────────────────────────────────
     function parseMP4FrameRate(buffer) {
       const view = new DataView(buffer);
       const len = buffer.byteLength;
-
       function findBox(offset, end, type) {
         while (offset + 8 <= end) {
           const size = view.getUint32(offset, false);
@@ -387,38 +596,32 @@
         }
         return null;
       }
-
       try {
         const moov = findBox(0, len, 'moov');
         if (!moov) return null;
-
         let off = moov.data;
         while (off + 8 <= moov.end) {
           const size = view.getUint32(off, false);
           const type = readString(view, off + 4, 4);
           if (size < 8) break;
-
           if (type === 'trak') {
-            const trakData = off + 8, trakEnd = off + size;
-            const mdia = findBox(trakData, trakEnd, 'mdia');
+            const mdia = findBox(off + 8, off + size, 'mdia');
             if (mdia) {
               const hdlr = findBox(mdia.data, mdia.end, 'hdlr');
               if (hdlr && readString(view, hdlr.data + 8, 4) === 'vide') {
                 const mdhd = findBox(mdia.data, mdia.end, 'mdhd');
                 if (mdhd) {
                   const version = view.getUint8(mdhd.data);
-                  const timescaleOff = mdhd.data + 1 + 3 + (version === 1 ? 16 : 8);
-                  const timescale = view.getUint32(timescaleOff, false);
+                  const timescale = view.getUint32(mdhd.data + 4 + (version === 1 ? 16 : 8), false);
                   if (!timescale) break;
-
                   const minf = findBox(mdia.data, mdia.end, 'minf');
                   if (minf) {
                     const stbl = findBox(minf.data, minf.end, 'stbl');
                     if (stbl) {
                       const stts = findBox(stbl.data, stbl.end, 'stts');
                       if (stts) {
-                        const sampleDelta = view.getUint32(stts.data + 8, false);
-                        if (sampleDelta > 0) return Math.round((timescale / sampleDelta) * 1000) / 1000;
+                        const delta = view.getUint32(stts.data + 8, false);
+                        if (delta > 0) return Math.round((timescale / delta) * 1000) / 1000;
                       }
                     }
                   }
@@ -428,13 +631,16 @@
           }
           off += size;
         }
-      } catch (_) { /* malformed box */ }
-
+      } catch (_) {}
       return null;
     }
 
-    // ── File routing ──────────────────────────────────────────────────────────
+    // ── State ─────────────────────────────────────────────────────────────────
+    let currentFileType = 'image';
+    let currentExifRows = [];
+    let currentPalette  = [];
 
+    // ── File routing ──────────────────────────────────────────────────────────
     function analyzeFile(file) {
       if (!file) return;
       if (file.type.startsWith('image/')) analyzeImage(file);
@@ -442,7 +648,6 @@
     }
 
     // ── Image analysis ────────────────────────────────────────────────────────
-
     function analyzeImage(file) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -452,10 +657,28 @@
         img.onload = () => {
           const w = img.naturalWidth, h = img.naturalHeight;
           const mime = file.type.toLowerCase();
+
+          // Draw to offscreen canvas for palette extraction
+          const colorCanvas = document.createElement('canvas');
+          colorCanvas.width = w; colorCanvas.height = h;
+          colorCanvas.getContext('2d').drawImage(img, 0, 0);
+
           let dpiInfo = null;
           if (mime === 'image/jpeg' || mime === 'image/jpg') dpiInfo = parseJPEGDPI(buffer);
           else if (mime === 'image/png') dpiInfo = parsePNGDPI(buffer);
-          showImageResults(file, url, w, h, dpiInfo);
+
+          // Full EXIF (JPEG only)
+          let exifRows = [];
+          if (mime === 'image/jpeg' || mime === 'image/jpg') {
+            const tiffBase = findJPEGEXIFBase(buffer);
+            if (tiffBase !== null) {
+              const exif = parseEXIFFull(buffer, tiffBase);
+              if (exif) exifRows = buildExifRows(exif);
+            }
+          }
+
+          const palette = extractPalette(colorCanvas);
+          showImageResults(file, url, w, h, dpiInfo, exifRows, palette);
         };
         img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
         img.src = url;
@@ -463,7 +686,11 @@
       reader.readAsArrayBuffer(file);
     }
 
-    function showImageResults(file, url, w, h, dpiInfo) {
+    function showImageResults(file, url, w, h, dpiInfo, exifRows, palette) {
+      currentFileType = 'image';
+      currentExifRows = exifRows;
+      currentPalette  = palette;
+
       const preview = document.getElementById('preview');
       if (preview._prevURL) URL.revokeObjectURL(preview._prevURL);
       preview._prevURL = url;
@@ -478,34 +705,34 @@
       document.getElementById('cell-fps').classList.add('hidden');
 
       document.getElementById('stat-format').textContent = formatMimeType(file.type);
-      document.getElementById('stat-size').textContent = formatBytes(file.size);
+      document.getElementById('stat-size').textContent   = formatBytes(file.size);
       document.getElementById('stat-resolution').textContent = `${w} × ${h} px`;
       document.getElementById('stat-aspect').textContent = aspectRatio(w, h);
 
-      const mp = formatMegapixels(w, h);
-      document.getElementById('stat-pixels').textContent = mp;
+      document.getElementById('stat-pixels').textContent = formatMegapixels(w, h);
       const pixSub = document.getElementById('stat-pixels-sub');
       pixSub.textContent = `(${(w * h).toLocaleString()} px²)`;
       pixSub.classList.remove('hidden');
 
-      const dpiEl = document.getElementById('stat-dpi');
+      const dpiEl   = document.getElementById('stat-dpi');
       const dpiNote = document.getElementById('stat-dpi-note');
       if (dpiInfo) {
-        dpiEl.textContent = dpiInfo.label;
+        dpiEl.textContent  = dpiInfo.label;
         dpiNote.textContent = dpiInfo.note || '';
         dpiNote.classList.toggle('hidden', !dpiInfo.note);
       } else {
         const supported = ['image/jpeg','image/jpg','image/png'].includes(file.type.toLowerCase());
-        dpiEl.textContent = 'Not embedded';
+        dpiEl.textContent  = 'Not embedded';
         dpiNote.textContent = supported ? 'No DPI metadata found in this file.' : 'DPI metadata parsing not supported for this format.';
         dpiNote.classList.remove('hidden');
       }
 
+      renderPalette(palette);
+      renderExif(exifRows);
       document.getElementById('results').classList.remove('hidden');
     }
 
     // ── Video analysis ────────────────────────────────────────────────────────
-
     function analyzeVideo(file) {
       const url = URL.createObjectURL(file);
       const video = document.createElement('video');
@@ -518,28 +745,23 @@
 
       video.onseeked = () => {
         const canvas = document.getElementById('videoThumb');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
         canvas.getContext('2d').drawImage(video, 0, 0);
+        const palette = extractPalette(canvas);
 
         const mime = file.type.toLowerCase();
-        const needsFpsParse = mime === 'video/mp4' || mime === 'video/quicktime';
-
-        if (needsFpsParse) {
-          const chunk = file.slice(0, 5 * 1024 * 1024);
+        const needsFps = mime === 'video/mp4' || mime === 'video/quicktime';
+        if (needsFps) {
           const reader = new FileReader();
           reader.onload = (e) => {
             const fps = parseMP4FrameRate(e.target.result);
-            showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, fps, fps ? 'Source: MP4 moov/trak/mdia' : null);
+            showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, fps, palette);
             URL.revokeObjectURL(url);
           };
-          reader.onerror = () => {
-            showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, null);
-            URL.revokeObjectURL(url);
-          };
-          reader.readAsArrayBuffer(chunk);
+          reader.onerror = () => { showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, palette); URL.revokeObjectURL(url); };
+          reader.readAsArrayBuffer(file.slice(0, 5 * 1024 * 1024));
         } else {
-          showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, null);
+          showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, palette);
           URL.revokeObjectURL(url);
         }
       };
@@ -548,7 +770,11 @@
       video.src = url;
     }
 
-    function showVideoResults(file, canvas, w, h, duration, fps, fpsNote) {
+    function showVideoResults(file, canvas, w, h, duration, fps, palette) {
+      currentFileType = 'video';
+      currentExifRows = [];
+      currentPalette  = palette;
+
       const preview = document.getElementById('preview');
       if (preview._prevURL) { URL.revokeObjectURL(preview._prevURL); preview._prevURL = null; }
       preview.classList.add('hidden');
@@ -560,30 +786,117 @@
       document.getElementById('cell-bitrate').classList.remove('hidden');
       document.getElementById('cell-fps').classList.remove('hidden');
 
-      document.getElementById('stat-format').textContent = formatMimeType(file.type);
-      document.getElementById('stat-size').textContent = formatBytes(file.size);
+      document.getElementById('stat-format').textContent     = formatMimeType(file.type);
+      document.getElementById('stat-size').textContent       = formatBytes(file.size);
       document.getElementById('stat-resolution').textContent = w && h ? `${w} × ${h} px` : '—';
-      document.getElementById('stat-aspect').textContent = w && h ? aspectRatio(w, h) : '—';
-      document.getElementById('stat-duration').textContent = formatDuration(duration);
-      document.getElementById('stat-bitrate').textContent = formatBitrate(file.size, duration);
+      document.getElementById('stat-aspect').textContent     = w && h ? aspectRatio(w, h) : '—';
+      document.getElementById('stat-duration').textContent   = formatDuration(duration);
+      document.getElementById('stat-bitrate').textContent    = formatBitrate(file.size, duration);
 
-      const fpsEl = document.getElementById('stat-fps');
-      const fpsNoteEl = document.getElementById('stat-fps-note');
+      const fpsEl   = document.getElementById('stat-fps');
+      const fpsNote = document.getElementById('stat-fps-note');
       if (fps !== null) {
-        fpsEl.textContent = fps + ' fps';
-        fpsNoteEl.textContent = fpsNote || '';
-        fpsNoteEl.classList.toggle('hidden', !fpsNote);
+        fpsEl.textContent   = fps + ' fps';
+        fpsNote.textContent = 'Source: MP4 moov/trak/mdia';
+        fpsNote.classList.remove('hidden');
       } else {
-        fpsEl.textContent = '—';
-        fpsNoteEl.textContent = 'Frame rate not available for this format.';
-        fpsNoteEl.classList.remove('hidden');
+        fpsEl.textContent   = '—';
+        fpsNote.textContent = 'Frame rate not available for this format.';
+        fpsNote.classList.remove('hidden');
       }
 
+      renderPalette(palette);
+      renderExif([]);
       document.getElementById('results').classList.remove('hidden');
     }
 
-    // ── Input handlers ────────────────────────────────────────────────────────
+    // ── Render palette ────────────────────────────────────────────────────────
+    function renderPalette(colors) {
+      const section = document.getElementById('paletteSection');
+      const container = document.getElementById('paletteSwatches');
+      container.innerHTML = '';
+      if (!colors.length) { section.classList.add('hidden'); return; }
+      section.classList.remove('hidden');
+      for (const hex of colors) {
+        const btn = document.createElement('button');
+        btn.className = 'relative group flex flex-col items-center gap-1';
+        btn.innerHTML = `
+          <div class="w-10 h-10 rounded-lg shadow-sm border border-black/10 dark:border-white/10" style="background:${hex}"></div>
+          <span class="text-xs font-mono text-gray-500 dark:text-gray-400">${hex}</span>
+        `;
+        btn.addEventListener('click', () => showCopyFeedback(btn, hex));
+        container.appendChild(btn);
+      }
+    }
 
+    // ── Render EXIF ───────────────────────────────────────────────────────────
+    function renderExif(rows) {
+      const section = document.getElementById('exifSection');
+      const content = document.getElementById('exifContent');
+      const rowsEl  = document.getElementById('exifRows');
+      const chevron = document.getElementById('exifChevron');
+
+      if (!rows.length) {
+        section.classList.add('hidden');
+        return;
+      }
+      section.classList.remove('hidden');
+      rowsEl.innerHTML = '';
+      for (const [label, val] of rows) {
+        const row = document.createElement('div');
+        row.className = 'flex justify-between py-1.5 text-sm';
+        row.innerHTML = `
+          <span class="text-gray-400 dark:text-gray-500 font-medium shrink-0 pr-4">${label}</span>
+          <span class="text-gray-800 dark:text-gray-200 text-right break-all">${val}</span>
+        `;
+        rowsEl.appendChild(row);
+      }
+
+      // Reset collapsed state on new file
+      content.classList.add('hidden');
+      chevron.classList.remove('open');
+    }
+
+    document.getElementById('exifToggle').addEventListener('click', () => {
+      const content = document.getElementById('exifContent');
+      const chevron = document.getElementById('exifChevron');
+      const hidden = content.classList.toggle('hidden');
+      chevron.classList.toggle('open', !hidden);
+    });
+
+    // ── Export summary ────────────────────────────────────────────────────────
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      const lines = [];
+      const title = currentFileType === 'video' ? 'Video Analysis' : 'Image Analysis';
+      lines.push(title);
+      lines.push('─'.repeat(36));
+
+      const always = [['Format','stat-format'],['File Size','stat-size'],['Resolution','stat-resolution'],['Aspect Ratio','stat-aspect']];
+      const imageOnly = [['Megapixels','stat-pixels'],['DPI','stat-dpi']];
+      const videoOnly = [['Duration','stat-duration'],['Bitrate','stat-bitrate'],['Frame Rate','stat-fps']];
+      const statRows = [...always, ...(currentFileType === 'image' ? imageOnly : videoOnly)];
+
+      for (const [label, id] of statRows) {
+        const val = document.getElementById(id)?.textContent?.trim();
+        if (val && val !== '—') lines.push(`${label.padEnd(14)}${val}`);
+      }
+
+      if (currentExifRows.length) {
+        lines.push(''); lines.push('EXIF Data'); lines.push('─'.repeat(36));
+        for (const [label, val] of currentExifRows) lines.push(`${label.padEnd(14)}${val}`);
+      }
+
+      if (currentPalette.length) {
+        lines.push(''); lines.push('Color Palette'); lines.push('─'.repeat(36));
+        lines.push(currentPalette.join('  '));
+      }
+
+      const text = lines.join('\n');
+      const btn = document.getElementById('exportBtn');
+      showCopyFeedback(btn, text);
+    });
+
+    // ── Input handlers ────────────────────────────────────────────────────────
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', () => { if (fileInput.files[0]) analyzeFile(fileInput.files[0]); });
@@ -594,7 +907,11 @@
     document.addEventListener('paste', (e) => {
       const items = e.clipboardData?.items;
       if (!items) return;
-      for (const item of items) { if (item.kind === 'file' && (item.type.startsWith('image/') || item.type.startsWith('video/'))) { analyzeFile(item.getAsFile()); break; } }
+      for (const item of items) {
+        if (item.kind === 'file' && (item.type.startsWith('image/') || item.type.startsWith('video/'))) {
+          analyzeFile(item.getAsFile()); break;
+        }
+      }
     });
   </script>
 </body>
