@@ -262,7 +262,10 @@
           <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(34,197,94,0.7)"></span>G</span>
           <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(59,130,246,0.7)"></span>B</span>
           <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-0.5 rounded" style="background:rgba(120,120,120,0.7)"></span>Lum</span>
-          <button id="histCopyBtn" class="ml-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">Copy</button>
+          <button id="histCopyBtn" class="ml-2 flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span id="histCopyLabel">Copy</span>
+          </button>
         </div>
       </div>
       <canvas id="histModalCanvas" class="w-full rounded"></canvas>
@@ -1348,8 +1351,9 @@
       canvas.toBlob(async (blob) => {
         try {
           await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-          btn.textContent = 'Copied!';
-          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+          const lbl = document.getElementById('histCopyLabel');
+          lbl.textContent = 'Copied!';
+          setTimeout(() => { lbl.textContent = 'Copy'; }, 1500);
         } catch (_) {}
       });
     });
