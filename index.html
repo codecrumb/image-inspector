@@ -245,6 +245,10 @@
         <button id="exportBtn" class="relative w-full py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           Copy Summary
         </button>
+        <button id="lensBtn" class="hidden relative w-full mt-2 py-2 rounded-lg text-sm font-medium text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center justify-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><circle cx="11" cy="11" r="3"/></svg>
+          Search with Google Lens
+        </button>
       </div>
 
     </div>
@@ -258,6 +262,12 @@
     <p class="text-white text-2xl font-bold mt-4">Drop anywhere</p>
     <p class="text-indigo-300 text-sm mt-2">Release to analyze your file</p>
   </div>
+
+  <!-- Hidden form for Google Lens upload -->
+  <form id="lensForm" action="https://lens.google.com/upload"
+        method="POST" enctype="multipart/form-data" target="_blank" class="hidden">
+    <input type="file" name="encoded_image" id="lensFile">
+  </form>
 
   <!-- Histogram modal -->
   <div id="histModal" class="hidden fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
@@ -914,15 +924,17 @@
     }
 
     // ── State ─────────────────────────────────────────────────────────────────
-    let currentFileType = 'image';
-    let currentExifRows = [];
-    let currentPalette  = [];
-    let currentBuffer   = null;
-    let currentMime     = '';
+    let currentFileType  = 'image';
+    let currentExifRows  = [];
+    let currentPalette   = [];
+    let currentBuffer    = null;
+    let currentMime      = '';
+    let currentSourceUrl = null;
 
     // ── File routing ──────────────────────────────────────────────────────────
-    function analyzeFile(file) {
+    function analyzeFile(file, sourceUrl = null) {
       if (!file) return;
+      currentSourceUrl = sourceUrl;
       if (file.type.startsWith('image/')) analyzeImage(file);
       else if (file.type.startsWith('video/')) analyzeVideo(file);
     }
@@ -985,6 +997,7 @@
 
     function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo = null) {
       currentFileType = 'image';
+      document.getElementById('lensBtn').classList.remove('hidden');
       currentExifRows = exifRows;
       currentPalette  = visualData.palette;
       currentBuffer   = buffer ?? null;
@@ -1123,6 +1136,8 @@
 
     function showVideoResults(file, canvas, w, h, duration, fps, visualData) {
       currentFileType = 'video';
+      currentSourceUrl = null;
+      document.getElementById('lensBtn').classList.add('hidden');
       currentExifRows = [];
       currentPalette  = visualData.palette;
 
@@ -1670,6 +1685,26 @@
       const f = e.dataTransfer.files[0];
       if (f) analyzeFile(f);
     });
+    // ── Google Lens ───────────────────────────────────────────────────────────
+    async function openGoogleLens() {
+      if (currentSourceUrl) {
+        window.open('https://lens.google.com/uploadbyurl?url=' + encodeURIComponent(currentSourceUrl), '_blank');
+        return;
+      }
+      const preview = document.getElementById('preview');
+      if (!preview._prevURL) return;
+      try {
+        const blob = await fetch(preview._prevURL).then(r => r.blob());
+        const ext = blob.type.split('/')[1] || 'png';
+        const file = new File([blob], `image.${ext}`, { type: blob.type });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        document.getElementById('lensFile').files = dt.files;
+        document.getElementById('lensForm').submit();
+      } catch (_) {}
+    }
+    document.getElementById('lensBtn').addEventListener('click', openGoogleLens);
+
     document.addEventListener('paste', (e) => {
       const items = e.clipboardData?.items;
       if (!items) return;
@@ -1719,7 +1754,7 @@
                   const ext = u.split('?')[0].split('.').pop().toLowerCase();
                   const mime = ct.split(';')[0].trim();
                   const name = u.split('/').pop().split('?')[0] || `pasted.${ext}`;
-                  analyzeFile(new File([blob], name, { type: mime }));
+                  analyzeFile(new File([blob], name, { type: mime }), u);
                 });
               });
             tryFetch(fetchUrl)
