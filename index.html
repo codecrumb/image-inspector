@@ -1013,7 +1013,37 @@
       } else {
         const appendedBytes = currentBuffer.byteLength - appendOffset;
         const type = sniffDataType(view, appendOffset, appendedBytes);
-        result.innerHTML = `<p class="text-red-600 dark:text-red-400 font-medium">⚠ ${formatBytes(appendedBytes)} of ${type} found after image end marker (byte offset ${appendOffset.toLocaleString()}).</p>`;
+        const isText = type === 'plain text';
+
+        let previewHtml = '';
+        if (isText) {
+          const slice = new Uint8Array(currentBuffer, appendOffset, Math.min(appendedBytes, 8192));
+          const text = new TextDecoder('utf-8', { fatal: false }).decode(slice);
+          const truncated = appendedBytes > 8192;
+          const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          previewHtml = `
+            <div class="mt-2">
+              <button class="text-xs text-blue-500 dark:text-blue-400 hover:underline" onclick="this.nextElementSibling.classList.toggle('hidden');this.textContent=this.nextElementSibling.classList.contains('hidden')?'Show content':'Hide content'">Show content</button>
+              <div class="hidden mt-2">
+                <pre class="text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono">${escaped}</pre>
+                ${truncated ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Showing first 8 KB of ${formatBytes(appendedBytes)}.</p>` : ''}
+              </div>
+            </div>`;
+        } else {
+          const hexBytes = Math.min(appendedBytes, 64);
+          let hex = '';
+          for (let i = 0; i < hexBytes; i++) hex += view.getUint8(appendOffset + i).toString(16).padStart(2, '0') + ' ';
+          previewHtml = `
+            <div class="mt-2">
+              <button class="text-xs text-blue-500 dark:text-blue-400 hover:underline" onclick="this.nextElementSibling.classList.toggle('hidden');this.textContent=this.nextElementSibling.classList.contains('hidden')?'Show hex preview':'Hide hex preview'">Show hex preview</button>
+              <div class="hidden mt-2">
+                <pre class="text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-32 overflow-auto font-mono break-all">${hex.trimEnd()}</pre>
+                <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">First ${hexBytes} bytes of ${formatBytes(appendedBytes)}.</p>
+              </div>
+            </div>`;
+        }
+
+        result.innerHTML = `<p class="text-red-600 dark:text-red-400 font-medium">⚠ ${formatBytes(appendedBytes)} of ${type} found after image end marker (byte offset ${appendOffset.toLocaleString()}).</p>${previewHtml}`;
       }
     });
 
