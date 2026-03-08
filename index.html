@@ -223,7 +223,7 @@
     const isMac = /Mac/.test(ua) && !isIPad;
     const pasteHint = document.getElementById('pasteHint');
     if (!isIPhone) {
-      pasteHint.textContent = 'or paste an image with ' + (isMac || isIPad ? 'Cmd+V' : 'Ctrl+V');
+      pasteHint.textContent = 'or paste with ' + (isMac || isIPad ? 'Cmd+V' : 'Ctrl+V');
     }
 
     // ── Theme toggle ──────────────────────────────────────────────────────────
