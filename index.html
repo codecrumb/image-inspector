@@ -1031,8 +1031,10 @@
       else if (mime === 'image/jpeg' || mime === 'image/jpg') appendOffset = findJPEGAppendedOffset(currentBuffer);
 
       const result = document.getElementById('scanResult');
+      const scanSection = document.getElementById('stegoScanSection');
       if (appendOffset === null) {
-        result.innerHTML = `<p class="text-green-600 dark:text-green-400 font-medium">✓ No data found after image end marker.</p>`;
+        scanSection.classList.add('hidden');
+        return;
       } else {
         const appendedBytes = currentBuffer.byteLength - appendOffset;
         const type = sniffDataType(view, appendOffset, appendedBytes);
