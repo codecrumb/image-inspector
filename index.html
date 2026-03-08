@@ -166,6 +166,13 @@
           <p id="stat-quality-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
 
+        <!-- EXIF orientation (JPEG only, when present) -->
+        <div id="cell-orientation" data-copyid="stat-orientation" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Orientation</p>
+          <p id="stat-orientation" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-orientation-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+
         <!-- Video-only (hidden by default) -->
         <div id="cell-duration" data-copyid="stat-duration" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Duration</p>
@@ -938,16 +945,28 @@
 
           // Full EXIF (JPEG only)
           let exifRows = [];
+          let orientationInfo = null;
           if (mime === 'image/jpeg' || mime === 'image/jpg') {
             const tiffBase = findJPEGEXIFBase(buffer);
             if (tiffBase !== null) {
               const exif = parseEXIFFull(buffer, tiffBase);
-              if (exif) exifRows = buildExifRows(exif);
+              if (exif) {
+                exifRows = buildExifRows(exif);
+                const orientLabels = {
+                  1: 'Normal', 2: 'Flipped Horizontal', 3: 'Rotated 180°',
+                  4: 'Flipped Vertical', 5: 'Rotated 90° CW + Flipped',
+                  6: 'Rotated 90° CW', 7: 'Rotated 90° CCW + Flipped', 8: 'Rotated 90° CCW'
+                };
+                const ov = exif.ifd0[0x0112];
+                if (ov != null && orientLabels[ov]) {
+                  orientationInfo = { label: orientLabels[ov], note: `EXIF value: ${ov}` };
+                }
+              }
             }
           }
 
           const visualData = extractVisualData(colorCanvas);
-          showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo);
+          showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo);
         };
         img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
         img.src = url;
@@ -955,7 +974,7 @@
       reader.readAsArrayBuffer(file);
     }
 
-    function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo) {
+    function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo = null) {
       currentFileType = 'image';
       currentExifRows = exifRows;
       currentPalette  = visualData.palette;
@@ -985,6 +1004,7 @@
       document.getElementById('cell-dpi').classList.remove('hidden');
       document.getElementById('cell-bitdepth').classList.toggle('hidden', !hasBitDepth);
       document.getElementById('cell-quality').classList.toggle('hidden', !isJpeg);
+      document.getElementById('cell-orientation').classList.toggle('hidden', !orientationInfo);
       document.getElementById('cell-duration').classList.add('hidden');
       document.getElementById('cell-bitrate').classList.add('hidden');
       document.getElementById('cell-fps').classList.add('hidden');
@@ -1038,6 +1058,14 @@
           qualNote.textContent = 'No quantization table in this file.';
           qualNote.classList.remove('hidden');
         }
+      }
+
+      if (orientationInfo) {
+        const orEl   = document.getElementById('stat-orientation');
+        const orNote = document.getElementById('stat-orientation-note');
+        orEl.textContent   = orientationInfo.label;
+        orNote.textContent = orientationInfo.note;
+        orNote.classList.remove('hidden');
       }
 
       checkSteganography(file, w, h);
@@ -1098,6 +1126,7 @@
       document.getElementById('cell-dpi').classList.add('hidden');
       document.getElementById('cell-bitdepth').classList.add('hidden');
       document.getElementById('cell-quality').classList.add('hidden');
+      document.getElementById('cell-orientation').classList.add('hidden');
       document.getElementById('cell-duration').classList.remove('hidden');
       document.getElementById('cell-bitrate').classList.remove('hidden');
       document.getElementById('cell-fps').classList.remove('hidden');
@@ -1470,7 +1499,7 @@
       lines.push('─'.repeat(36));
 
       const always = [['Format','stat-format'],['File Size','stat-size'],['Resolution','stat-resolution'],['Aspect Ratio','stat-aspect']];
-      const imageOnly = [['Megapixels','stat-pixels'],['DPI','stat-dpi']];
+      const imageOnly = [['Megapixels','stat-pixels'],['DPI','stat-dpi'],['Orientation','stat-orientation']];
       const videoOnly = [['Duration','stat-duration'],['Bitrate','stat-bitrate'],['Frame Rate','stat-fps']];
       const statRows = [...always, ...(currentFileType === 'image' ? imageOnly : videoOnly)];
 
