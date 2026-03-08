@@ -1331,9 +1331,35 @@
     document.addEventListener('paste', (e) => {
       const items = e.clipboardData?.items;
       if (!items) return;
+
+      // Prefer a pasted file
       for (const item of items) {
         if (item.kind === 'file' && (item.type.startsWith('image/') || item.type.startsWith('video/'))) {
-          analyzeFile(item.getAsFile()); break;
+          analyzeFile(item.getAsFile()); return;
+        }
+      }
+
+      // Fall back: plain-text URL
+      for (const item of items) {
+        if (item.kind === 'string' && item.type === 'text/plain') {
+          item.getAsString((text) => {
+            const url = text.trim();
+            if (!/^https?:\/\/.+/i.test(url)) return;
+            fetch(url)
+              .then((res) => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const ct = res.headers.get('content-type') || '';
+                if (!ct.startsWith('image/') && !ct.startsWith('video/')) throw new Error('Not an image or video URL');
+                return res.blob().then((blob) => {
+                  const ext = url.split('?')[0].split('.').pop().toLowerCase();
+                  const mime = ct.split(';')[0].trim();
+                  const name = url.split('/').pop().split('?')[0] || `pasted.${ext}`;
+                  analyzeFile(new File([blob], name, { type: mime }));
+                });
+              })
+              .catch(() => {}); // silently ignore non-image URLs
+          });
+          return;
         }
       }
     });
