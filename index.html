@@ -350,6 +350,37 @@
       return 'unknown binary';
     }
 
+    function parseZIPEntries(view, startOffset, len) {
+      const entries = [];
+      let offset = startOffset;
+      const end = startOffset + len;
+      while (offset + 30 <= end) {
+        if (view.getUint32(offset, true) !== 0x04034B50) break;
+        const flags      = view.getUint16(offset + 6,  true);
+        const compSize   = view.getUint32(offset + 18, true);
+        const uncompSize = view.getUint32(offset + 22, true);
+        const fnLen      = view.getUint16(offset + 26, true);
+        const extraLen   = view.getUint16(offset + 28, true);
+        if (offset + 30 + fnLen > end) break;
+        const name = new TextDecoder('utf-8', { fatal: false }).decode(
+          new Uint8Array(view.buffer, offset + 30, fnLen)
+        );
+        entries.push({ name, compressedSize: compSize, uncompressedSize: uncompSize });
+        // if data descriptor flag set and sizes are 0, we can't skip forward reliably
+        if ((flags & 0x08) && compSize === 0) break;
+        const next = offset + 30 + fnLen + extraLen + compSize;
+        if (next <= offset || next > end) break;
+        offset = next;
+      }
+      return entries;
+    }
+
+    function makeDownloadBtn(buffer, offset, len, ext) {
+      const blob = new Blob([new Uint8Array(buffer, offset, len)]);
+      const url  = URL.createObjectURL(blob);
+      return `<a href="${url}" download="appended_data.${ext}" class="inline-block mt-2 text-xs font-medium px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">Download .${ext}</a>`;
+    }
+
     function formatMimeType(mime) {
       const map = {
         'image/jpeg': 'JPEG', 'image/jpg': 'JPEG', 'image/png': 'PNG',
@@ -1005,10 +1036,17 @@
       } else {
         const appendedBytes = currentBuffer.byteLength - appendOffset;
         const type = sniffDataType(view, appendOffset, appendedBytes);
-        const isText = type === 'plain text';
+
+        const extMap = {
+          'ZIP archive': 'zip', 'RAR archive': 'rar', 'JPEG image': 'jpg',
+          'PNG image': 'png', 'PDF document': 'pdf', 'GIF image': 'gif',
+          'plain text': 'txt', 'unknown binary': 'bin'
+        };
+        const ext = extMap[type] ?? 'bin';
+        const dlBtn = makeDownloadBtn(currentBuffer, appendOffset, appendedBytes, ext);
 
         let previewHtml = '';
-        if (isText) {
+        if (type === 'plain text') {
           const slice = new Uint8Array(currentBuffer, appendOffset, Math.min(appendedBytes, 8192));
           const text = new TextDecoder('utf-8', { fatal: false }).decode(slice);
           const truncated = appendedBytes > 8192;
@@ -1021,6 +1059,14 @@
                 ${truncated ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Showing first 8 KB of ${formatBytes(appendedBytes)}.</p>` : ''}
               </div>
             </div>`;
+        } else if (type === 'ZIP archive') {
+          const entries = parseZIPEntries(view, appendOffset, appendedBytes);
+          if (entries.length > 0) {
+            const rows = entries.map(e =>
+              `<li class="flex justify-between gap-4"><span class="font-mono truncate">${e.name.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span><span class="text-gray-400 dark:text-gray-500 shrink-0">${formatBytes(e.uncompressedSize)}</span></li>`
+            ).join('');
+            previewHtml = `<ul class="mt-2 space-y-1 text-xs text-gray-700 dark:text-gray-300">${rows}</ul>`;
+          }
         } else {
           const hexBytes = Math.min(appendedBytes, 64);
           let hex = '';
@@ -1035,7 +1081,7 @@
             </div>`;
         }
 
-        result.innerHTML = `<p class="text-red-600 dark:text-red-400 font-medium">⚠ ${formatBytes(appendedBytes)} of ${type} found after image end marker (byte offset ${appendOffset.toLocaleString()}).</p>${previewHtml}`;
+        result.innerHTML = `<p class="text-red-600 dark:text-red-400 font-medium">⚠ ${formatBytes(appendedBytes)} of ${type} found after image end marker (byte offset ${appendOffset.toLocaleString()}).</p>${previewHtml}${dlBtn}`;
       }
     }
 
