@@ -168,6 +168,17 @@
         </div>
       </div>
 
+      <!-- Steganography hint -->
+      <div id="stegoWarning" class="hidden border-t border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3">
+        <div class="flex items-start gap-2">
+          <span class="text-amber-500 dark:text-amber-400 text-base leading-5 shrink-0">⚠</span>
+          <div>
+            <p class="text-sm font-semibold text-amber-700 dark:text-amber-400">Unusually large file for these dimensions</p>
+            <p id="stegoDetail" class="text-xs text-amber-600 dark:text-amber-500 mt-0.5"></p>
+          </div>
+        </div>
+      </div>
+
       <!-- Color Palette -->
       <div id="paletteSection" class="hidden border-t border-gray-200 dark:border-gray-700 p-4">
         <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-3">Color Palette</p>
@@ -746,6 +757,7 @@
         dpiNote.classList.remove('hidden');
       }
 
+      checkSteganography(file, w, h);
       renderPalette(palette);
       renderExif(exifRows);
       document.getElementById('results').classList.remove('hidden');
@@ -824,9 +836,32 @@
         fpsNote.classList.remove('hidden');
       }
 
+      document.getElementById('stegoWarning').classList.add('hidden');
       renderPalette(palette);
       renderExif([]);
       document.getElementById('results').classList.remove('hidden');
+    }
+
+    // ── Steganography hint ────────────────────────────────────────────────────
+    function checkSteganography(file, w, h) {
+      const bpp = file.size / (w * h);
+      const fmt = file.type.toLowerCase();
+      const thresholds = {
+        'image/jpeg': { t: 2.0, typical: 'typical JPEG is under 0.5' },
+        'image/jpg':  { t: 2.0, typical: 'typical JPEG is under 0.5' },
+        'image/png':  { t: 4.5, typical: 'typical PNG is under 4' },
+        'image/webp': { t: 1.5, typical: 'typical WebP is under 0.5' },
+        'image/avif': { t: 1.0, typical: 'typical AVIF is under 0.3' },
+      };
+      const warning = document.getElementById('stegoWarning');
+      const detail  = document.getElementById('stegoDetail');
+      const entry = thresholds[fmt];
+      if (entry && bpp > entry.t) {
+        detail.textContent = `${bpp.toFixed(2)} bytes/px — ${entry.typical}. Could indicate embedded data, very high quality export, or large metadata (e.g. ICC profile, EXIF).`;
+        warning.classList.remove('hidden');
+      } else {
+        warning.classList.add('hidden');
+      }
     }
 
     // ── Render palette ────────────────────────────────────────────────────────
