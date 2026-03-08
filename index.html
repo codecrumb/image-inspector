@@ -784,6 +784,15 @@
       const cs = exifIfd[0xA001];
       if (cs != null) add('Color Space', cs === 1 ? 'sRGB' : cs === 0xFFFF ? 'Uncalibrated' : `${cs}`);
 
+      // Orientation
+      const orientLabels = {
+        1:'Normal', 2:'Flipped Horizontal', 3:'Rotated 180°',
+        4:'Flipped Vertical', 5:'Rotated 90° CW + Flipped',
+        6:'Rotated 90° CW', 7:'Rotated 90° CCW + Flipped', 8:'Rotated 90° CCW'
+      };
+      const ov = ifd0[0x0112];
+      if (ov != null && orientLabels[ov] && ov !== 1) add('Orientation', orientLabels[ov]);
+
       // Software / Artist / Copyright
       if (ifd0[0x0131]) add('Software',  ifd0[0x0131]);
       if (ifd0[0x013B]) add('Artist',    ifd0[0x013B]);
@@ -952,13 +961,13 @@
               const exif = parseEXIFFull(buffer, tiffBase);
               if (exif) {
                 exifRows = buildExifRows(exif);
-                const orientLabels = {
-                  1: 'Normal', 2: 'Flipped Horizontal', 3: 'Rotated 180°',
-                  4: 'Flipped Vertical', 5: 'Rotated 90° CW + Flipped',
-                  6: 'Rotated 90° CW', 7: 'Rotated 90° CCW + Flipped', 8: 'Rotated 90° CCW'
-                };
                 const ov = exif.ifd0[0x0112];
-                if (ov != null && orientLabels[ov]) {
+                const orientLabels = {
+                  1:'Normal', 2:'Flipped Horizontal', 3:'Rotated 180°',
+                  4:'Flipped Vertical', 5:'Rotated 90° CW + Flipped',
+                  6:'Rotated 90° CW', 7:'Rotated 90° CCW + Flipped', 8:'Rotated 90° CCW'
+                };
+                if (ov != null && orientLabels[ov] && ov !== 1) {
                   orientationInfo = { label: orientLabels[ov], note: `EXIF value: ${ov}` };
                 }
               }
