@@ -262,6 +262,7 @@
           <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(34,197,94,0.7)"></span>G</span>
           <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(59,130,246,0.7)"></span>B</span>
           <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-0.5 rounded" style="background:rgba(120,120,120,0.7)"></span>Lum</span>
+          <button id="histCopyBtn" class="ml-2 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">Copy</button>
         </div>
       </div>
       <canvas id="histModalCanvas" class="w-full rounded"></canvas>
@@ -1340,6 +1341,17 @@
       if (e.key === 'Escape' && !document.getElementById('histModal').classList.contains('hidden')) {
         closeHistogramModal();
       }
+    });
+    document.getElementById('histCopyBtn').addEventListener('click', () => {
+      const btn = document.getElementById('histCopyBtn');
+      const canvas = document.getElementById('histModalCanvas');
+      canvas.toBlob(async (blob) => {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        } catch (_) {}
+      });
     });
 
     // ── Render EXIF ───────────────────────────────────────────────────────────
