@@ -216,7 +216,7 @@
         <!-- Histogram -->
         <div id="histogramWrap" class="hidden">
           <p class="text-xs text-gray-400 dark:text-gray-500 mb-1.5">Histogram</p>
-          <canvas id="histogramCanvas" class="w-full rounded" height="60"></canvas>
+          <canvas id="histogramCanvas" class="w-full rounded cursor-pointer" height="60" title="Click to expand"></canvas>
         </div>
       </div>
 
@@ -250,6 +250,22 @@
     </svg>
     <p class="text-white text-2xl font-bold mt-4">Drop anywhere</p>
     <p class="text-indigo-300 text-sm mt-2">Release to analyze your file</p>
+  </div>
+
+  <!-- Histogram modal -->
+  <div id="histModal" class="hidden fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
+    <div class="bg-white dark:bg-gray-900 rounded-xl shadow-2xl p-5 w-full max-w-2xl">
+      <div class="flex items-center justify-between mb-3">
+        <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">Histogram</p>
+        <div class="flex items-center gap-4 text-xs font-mono text-gray-400 dark:text-gray-500">
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(239,68,68,0.7)"></span>R</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(34,197,94,0.7)"></span>G</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(59,130,246,0.7)"></span>B</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-0.5 rounded" style="background:rgba(120,120,120,0.7)"></span>Lum</span>
+        </div>
+      </div>
+      <canvas id="histModalCanvas" class="w-full rounded"></canvas>
+    </div>
   </div>
 
   <!-- Lightbox -->
@@ -1180,8 +1196,11 @@
       wrap.classList.remove('hidden');
 
       const canvas = document.getElementById('histogramCanvas');
-      const W = 256, H = 60;
+      const dpr = window.devicePixelRatio || 1;
+      const W = Math.max(canvas.clientWidth, 256) * dpr;
+      const H = 60 * dpr;
       canvas.width = W;
+      canvas.height = H;
       const ctx = canvas.getContext('2d');
       const isDark = document.documentElement.classList.contains('dark');
 
@@ -1192,13 +1211,15 @@
       const peak = Math.max(...histR, ...histG, ...histB);
       if (peak === 0) return;
 
+      const xScale = W / 256;
+
       function drawChannel(hist, color) {
         ctx.beginPath();
         ctx.moveTo(0, H);
-        for (let x = 0; x < 256; x++) {
-          ctx.lineTo(x, H - Math.round((hist[x] / peak) * H));
+        for (let i = 0; i < 256; i++) {
+          ctx.lineTo(i * xScale, H - (hist[i] / peak) * H);
         }
-        ctx.lineTo(255, H);
+        ctx.lineTo(W, H);
         ctx.closePath();
         ctx.fillStyle = color;
         ctx.fill();
@@ -1212,15 +1233,114 @@
       const lumPeak = Math.max(...histL);
       if (lumPeak > 0) {
         ctx.beginPath();
-        for (let x = 0; x < 256; x++) {
-          const y = H - Math.round((histL[x] / lumPeak) * H);
-          if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        for (let i = 0; i < 256; i++) {
+          const x = i * xScale;
+          const y = H - (histL[i] / lumPeak) * H;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         }
         ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)';
-        ctx.lineWidth = 1;
+        ctx.lineWidth = dpr;
         ctx.stroke();
       }
     }
+
+    // ── Histogram modal ───────────────────────────────────────────────────────
+    function openHistogramModal() {
+      const modal = document.getElementById('histModal');
+      modal.classList.remove('hidden');
+      requestAnimationFrame(drawHistogramLarge);
+    }
+
+    function closeHistogramModal() {
+      document.getElementById('histModal').classList.add('hidden');
+    }
+
+    function drawHistogramLarge() {
+      if (!_lastHistData) return;
+      const canvas = document.getElementById('histModalCanvas');
+      const dpr = window.devicePixelRatio || 1;
+      const LABEL_H = 20; // px reserved for x-axis labels
+      const logW = canvas.clientWidth || 560;
+      const logH = 160;
+      canvas.width  = logW * dpr;
+      canvas.height = logH * dpr;
+      canvas.style.height = logH + 'px';
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      const isDark = document.documentElement.classList.contains('dark');
+      const chartH = logH - LABEL_H;
+      const W = logW;
+
+      // Background
+      ctx.fillStyle = isDark ? '#111827' : '#f9fafb';
+      ctx.fillRect(0, 0, W, logH);
+
+      const { histR, histG, histB, histL } = _lastHistData;
+      const peak = Math.max(...histR, ...histG, ...histB);
+      const xScale = W / 256;
+
+      // Grid lines
+      ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+      ctx.lineWidth = 1;
+      for (const v of [64, 128, 192]) {
+        const x = v * xScale;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, chartH); ctx.stroke();
+      }
+      for (const frac of [0.25, 0.5, 0.75]) {
+        const y = chartH - frac * chartH;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+
+      // X-axis labels
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)';
+      ctx.font = `${10 * dpr / dpr}px monospace`; // stays 10px logical
+      ctx.textAlign = 'center';
+      for (const v of [0, 64, 128, 192, 255]) {
+        ctx.fillText(v, v * xScale, logH - 4);
+      }
+
+      if (peak === 0) return;
+
+      function drawChannel(hist, color) {
+        ctx.beginPath();
+        ctx.moveTo(0, chartH);
+        for (let i = 0; i < 256; i++) {
+          ctx.lineTo(i * xScale, chartH - (hist[i] / peak) * chartH);
+        }
+        ctx.lineTo(W, chartH);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+
+      drawChannel(histR, 'rgba(239,68,68,0.5)');
+      drawChannel(histG, 'rgba(34,197,94,0.5)');
+      drawChannel(histB, 'rgba(59,130,246,0.5)');
+
+      // Luminance line
+      const lumPeak = Math.max(...histL);
+      if (lumPeak > 0) {
+        ctx.beginPath();
+        for (let i = 0; i < 256; i++) {
+          const x = i * xScale;
+          const y = chartH - (histL[i] / lumPeak) * chartH;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    }
+
+    document.getElementById('histogramCanvas').addEventListener('click', openHistogramModal);
+    document.getElementById('histModal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) closeHistogramModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !document.getElementById('histModal').classList.contains('hidden')) {
+        closeHistogramModal();
+      }
+    });
 
     // ── Render EXIF ───────────────────────────────────────────────────────────
     function renderExif(rows) {
