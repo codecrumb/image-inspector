@@ -199,10 +199,25 @@
         <div id="scanResult" class="text-xs"></div>
       </div>
 
-      <!-- Color Palette -->
+      <!-- Visual Analysis -->
       <div id="paletteSection" class="hidden border-t border-gray-200 dark:border-gray-700 p-4">
-        <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-3">Color Palette</p>
-        <div id="paletteSwatches" class="flex gap-3 flex-wrap"></div>
+        <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-3">Visual Analysis</p>
+
+        <!-- Average color + dominant palette -->
+        <div class="flex items-start gap-3 flex-wrap mb-4">
+          <div id="avgColorWrap" class="hidden flex-col items-center gap-1">
+            <div id="avgColorSwatch" class="w-10 h-10 rounded-lg shadow-sm border border-black/10 dark:border-white/10 cursor-pointer"></div>
+            <span id="avgColorHex" class="text-xs font-mono text-gray-500 dark:text-gray-400"></span>
+            <span class="text-xs text-gray-400 dark:text-gray-500">avg</span>
+          </div>
+          <div id="paletteSwatches" class="flex gap-3 flex-wrap"></div>
+        </div>
+
+        <!-- Histogram -->
+        <div id="histogramWrap" class="hidden">
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-1.5">Histogram</p>
+          <canvas id="histogramCanvas" class="w-full rounded" height="60"></canvas>
+        </div>
       </div>
 
       <!-- EXIF Data (collapsible, images only) -->
@@ -273,6 +288,7 @@
       const next = document.documentElement.classList.contains('dark') ? 'light' : 'dark';
       localStorage.setItem('theme', next);
       applyTheme(next);
+      drawHistogram();
     });
 
     // ── Copy feedback helper ──────────────────────────────────────────────────
@@ -760,38 +776,52 @@
       return rows;
     }
 
-    // ── Color palette extraction ───────────────────────────────────────────────
-    function extractPalette(sourceCanvas, count = 6) {
+    // ── Visual data extraction (palette + histogram + avg color) ──────────────
+    function extractVisualData(sourceCanvas) {
       try {
-        const SIZE = 150;
+        const SIZE = 200;
         const off = document.createElement('canvas');
         off.width = SIZE; off.height = SIZE;
         off.getContext('2d').drawImage(sourceCanvas, 0, 0, SIZE, SIZE);
         const data = off.getContext('2d').getImageData(0, 0, SIZE, SIZE).data;
 
-        // Quantize to 5 bits per channel, count frequencies
-        const freq = {};
+        const histR = new Uint32Array(256);
+        const histG = new Uint32Array(256);
+        const histB = new Uint32Array(256);
+        const histL = new Uint32Array(256);
+        const freq  = {};
+        let totalR = 0, totalG = 0, totalB = 0, pixCount = 0;
+
         for (let i = 0; i < data.length; i += 4) {
-          if (data[i+3] < 128) continue; // skip transparent
-          const key = ((data[i] >> 3) << 10) | ((data[i+1] >> 3) << 5) | (data[i+2] >> 3);
+          const r = data[i], g = data[i+1], b = data[i+2], a = data[i+3];
+          if (a < 128) continue;
+          histR[r]++; histG[g]++; histB[b]++;
+          histL[Math.round(0.299*r + 0.587*g + 0.114*b)]++;
+          totalR += r; totalG += g; totalB += b; pixCount++;
+          const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
           freq[key] = (freq[key] || 0) + 1;
         }
 
         const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
         const palette = [];
         for (const [keyStr] of sorted) {
-          if (palette.length >= count) break;
+          if (palette.length >= 6) break;
           const key = parseInt(keyStr);
           const r = ((key >> 10) & 31) << 3;
           const g = ((key >>  5) & 31) << 3;
           const b = ( key        & 31) << 3;
-          // Skip if too visually similar to an already-chosen color
-          if (palette.some(([pr,pg,pb]) => Math.hypot(r-pr, g-pg, b-pb) < 60)) continue;
+          if (palette.some(([pr,pg,pb]) => Math.hypot(r-pr,g-pg,b-pb) < 60)) continue;
           palette.push([r, g, b]);
         }
+        const paletteHex = palette.map(([r,g,b]) => '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join(''));
 
-        return palette.map(([r,g,b]) => '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join(''));
-      } catch (_) { return []; }
+        const avgHex = pixCount ? '#' + [totalR, totalG, totalB]
+          .map(v => Math.round(v / pixCount).toString(16).padStart(2, '0')).join('') : null;
+
+        return { palette: paletteHex, avgColor: avgHex, histR, histG, histB, histL };
+      } catch (_) {
+        return { palette: [], avgColor: null, histR: null, histG: null, histB: null, histL: null };
+      }
     }
 
     // ── MP4 frame rate parser (unchanged) ─────────────────────────────────────
@@ -896,8 +926,8 @@
             }
           }
 
-          const palette = extractPalette(colorCanvas);
-          showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer, qualityInfo, bitDepthInfo);
+          const visualData = extractVisualData(colorCanvas);
+          showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo);
         };
         img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
         img.src = url;
@@ -905,10 +935,10 @@
       reader.readAsArrayBuffer(file);
     }
 
-    function showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer, qualityInfo, bitDepthInfo) {
+    function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo) {
       currentFileType = 'image';
       currentExifRows = exifRows;
-      currentPalette  = palette;
+      currentPalette  = visualData.palette;
       currentBuffer   = buffer ?? null;
       currentMime     = file.type.toLowerCase();
 
@@ -991,7 +1021,7 @@
       }
 
       checkSteganography(file, w, h);
-      renderPalette(palette);
+      renderVisualAnalysis(visualData);
       renderExif(exifRows);
       document.getElementById('results').classList.remove('hidden');
     }
@@ -1011,7 +1041,7 @@
         const canvas = document.getElementById('videoThumb');
         canvas.width = video.videoWidth; canvas.height = video.videoHeight;
         canvas.getContext('2d').drawImage(video, 0, 0);
-        const palette = extractPalette(canvas);
+        const visualData = extractVisualData(canvas);
 
         const mime = file.type.toLowerCase();
         const needsFps = mime === 'video/mp4' || mime === 'video/quicktime';
@@ -1019,13 +1049,13 @@
           const reader = new FileReader();
           reader.onload = (e) => {
             const fps = parseMP4FrameRate(e.target.result);
-            showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, fps, palette);
+            showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, fps, visualData);
             URL.revokeObjectURL(url);
           };
-          reader.onerror = () => { showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, palette); URL.revokeObjectURL(url); };
+          reader.onerror = () => { showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, visualData); URL.revokeObjectURL(url); };
           reader.readAsArrayBuffer(file.slice(0, 5 * 1024 * 1024));
         } else {
-          showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, palette);
+          showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, visualData);
           URL.revokeObjectURL(url);
         }
       };
@@ -1034,10 +1064,10 @@
       video.src = url;
     }
 
-    function showVideoResults(file, canvas, w, h, duration, fps, palette) {
+    function showVideoResults(file, canvas, w, h, duration, fps, visualData) {
       currentFileType = 'video';
       currentExifRows = [];
-      currentPalette  = palette;
+      currentPalette  = visualData.palette;
 
       const preview = document.getElementById('preview');
       if (preview._prevURL) { URL.revokeObjectURL(preview._prevURL); preview._prevURL = null; }
@@ -1074,7 +1104,7 @@
       document.getElementById('stegoWarning').classList.add('hidden');
       document.getElementById('stegoScanSection').classList.add('hidden');
       currentBuffer = null;
-      renderPalette(palette);
+      renderVisualAnalysis(visualData);
       renderExif([]);
       document.getElementById('results').classList.remove('hidden');
     }
@@ -1101,14 +1131,34 @@
       }
     }
 
-    // ── Render palette ────────────────────────────────────────────────────────
-    function renderPalette(colors) {
+    // ── Render visual analysis (avg color, palette, histogram) ───────────────
+    let _lastHistData = null;
+
+    function renderVisualAnalysis(visualData) {
       const section = document.getElementById('paletteSection');
+      const { palette, avgColor, histR, histG, histB, histL } = visualData;
+
+      if (!palette.length && !avgColor) { section.classList.add('hidden'); return; }
+      section.classList.remove('hidden');
+
+      // Average color
+      const avgWrap   = document.getElementById('avgColorWrap');
+      const avgSwatch = document.getElementById('avgColorSwatch');
+      const avgHexEl  = document.getElementById('avgColorHex');
+      if (avgColor) {
+        avgSwatch.style.background = avgColor;
+        avgHexEl.textContent = avgColor;
+        avgWrap.classList.remove('hidden');
+        avgWrap.classList.add('flex');
+        avgSwatch.onclick = () => showCopyFeedback(avgWrap, avgColor);
+      } else {
+        avgWrap.classList.add('hidden');
+      }
+
+      // Palette swatches
       const container = document.getElementById('paletteSwatches');
       container.innerHTML = '';
-      if (!colors.length) { section.classList.add('hidden'); return; }
-      section.classList.remove('hidden');
-      for (const hex of colors) {
+      for (const hex of palette) {
         const btn = document.createElement('button');
         btn.className = 'relative group flex flex-col items-center gap-1';
         btn.innerHTML = `
@@ -1117,6 +1167,58 @@
         `;
         btn.addEventListener('click', () => showCopyFeedback(btn, hex));
         container.appendChild(btn);
+      }
+
+      // Histogram
+      _lastHistData = histR ? { histR, histG, histB, histL } : null;
+      drawHistogram();
+    }
+
+    function drawHistogram() {
+      const wrap = document.getElementById('histogramWrap');
+      if (!_lastHistData) { wrap.classList.add('hidden'); return; }
+      wrap.classList.remove('hidden');
+
+      const canvas = document.getElementById('histogramCanvas');
+      const W = 256, H = 60;
+      canvas.width = W;
+      const ctx = canvas.getContext('2d');
+      const isDark = document.documentElement.classList.contains('dark');
+
+      ctx.fillStyle = isDark ? '#111827' : '#f9fafb';
+      ctx.fillRect(0, 0, W, H);
+
+      const { histR, histG, histB, histL } = _lastHistData;
+      const peak = Math.max(...histR, ...histG, ...histB);
+      if (peak === 0) return;
+
+      function drawChannel(hist, color) {
+        ctx.beginPath();
+        ctx.moveTo(0, H);
+        for (let x = 0; x < 256; x++) {
+          ctx.lineTo(x, H - Math.round((hist[x] / peak) * H));
+        }
+        ctx.lineTo(255, H);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+
+      drawChannel(histR, 'rgba(239,68,68,0.5)');
+      drawChannel(histG, 'rgba(34,197,94,0.5)');
+      drawChannel(histB, 'rgba(59,130,246,0.5)');
+
+      // Luminance line
+      const lumPeak = Math.max(...histL);
+      if (lumPeak > 0) {
+        ctx.beginPath();
+        for (let x = 0; x < 256; x++) {
+          const y = H - Math.round((histL[x] / lumPeak) * H);
+          if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
       }
     }
 
@@ -1247,7 +1349,7 @@
       }
 
       if (currentPalette.length) {
-        lines.push(''); lines.push('Color Palette'); lines.push('─'.repeat(36));
+        lines.push(''); lines.push('Visual Analysis'); lines.push('─'.repeat(36));
         lines.push(currentPalette.join('  '));
       }
 
