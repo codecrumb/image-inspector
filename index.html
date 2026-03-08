@@ -152,6 +152,13 @@
           <p id="stat-dpi-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
 
+        <!-- Image-only (PNG + JPEG) -->
+        <div id="cell-bitdepth" data-copyid="stat-bitdepth" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Bit Depth</p>
+          <p id="stat-bitdepth" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-bitdepth-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+
         <!-- JPEG-only -->
         <div id="cell-quality" data-copyid="stat-quality" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">JPEG Quality</p>
@@ -433,6 +440,46 @@
       let s = '';
       for (let i = 0; i < len; i++) s += String.fromCharCode(view.getUint8(offset + i));
       return s;
+    }
+
+    // ── Bit depth parser ──────────────────────────────────────────────────────
+    function parseBitDepth(buffer, mime) {
+      const view = new DataView(buffer);
+
+      if (mime === 'image/png') {
+        // PNG signature (8) + chunk length (4) + "IHDR" (4) + width (4) + height (4) + bitDepth (1) + colorType (1)
+        if (buffer.byteLength < 26) return null;
+        const bits = view.getUint8(24);
+        const colorType = view.getUint8(25);
+        const channelMap = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+        const channels = channelMap[colorType];
+        const typeLabel = { 0: 'Grayscale', 2: 'RGB', 3: 'Indexed', 4: 'Grayscale+Alpha', 6: 'RGBA' }[colorType] ?? 'Unknown';
+        const note = channels ? `${bits} bits/channel · ${typeLabel} (${bits * channels} bits/px)` : `${bits} bits/channel · ${typeLabel}`;
+        return { label: `${bits}-bit`, note };
+      }
+
+      if (mime === 'image/jpeg' || mime === 'image/jpg') {
+        // Walk JPEG segments for any SOF marker to read sample precision
+        if (buffer.byteLength < 4 || readUint16BE(view, 0) !== 0xFFD8) return null;
+        let offset = 2;
+        while (offset + 4 <= buffer.byteLength) {
+          if (view.getUint8(offset) !== 0xFF) break;
+          const marker = readUint16BE(view, offset);
+          if (marker === 0xFFD9 || marker === 0xFFDA) break;
+          if (marker === 0xFFD8 || (marker >= 0xFFD0 && marker <= 0xFFD7)) { offset += 2; continue; }
+          const segLen = readUint16BE(view, offset + 2);
+          const lo = marker & 0xFF;
+          // SOF markers: C0-C3, C5-C7, C9-CB, CD-CF (exclude C4=DHT, C8=JPEG ext, CC=DAC)
+          if (lo >= 0xC0 && lo <= 0xCF && lo !== 0xC4 && lo !== 0xC8 && lo !== 0xCC) {
+            const bits = view.getUint8(offset + 4);
+            return { label: `${bits}-bit`, note: `${bits} bits per channel (from SOF segment)` };
+          }
+          offset += 2 + segLen;
+        }
+        return null;
+      }
+
+      return null;
     }
 
     // ── JPEG Quality estimator ────────────────────────────────────────────────
@@ -837,6 +884,8 @@
           let qualityInfo = null;
           if (mime === 'image/jpeg' || mime === 'image/jpg') qualityInfo = parseJPEGQuality(buffer);
 
+          const bitDepthInfo = parseBitDepth(buffer, mime);
+
           // Full EXIF (JPEG only)
           let exifRows = [];
           if (mime === 'image/jpeg' || mime === 'image/jpg') {
@@ -848,7 +897,7 @@
           }
 
           const palette = extractPalette(colorCanvas);
-          showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer, qualityInfo);
+          showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer, qualityInfo, bitDepthInfo);
         };
         img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
         img.src = url;
@@ -856,7 +905,7 @@
       reader.readAsArrayBuffer(file);
     }
 
-    function showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer, qualityInfo) {
+    function showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer, qualityInfo, bitDepthInfo) {
       currentFileType = 'image';
       currentExifRows = exifRows;
       currentPalette  = palette;
@@ -881,8 +930,10 @@
       document.getElementById('videoThumb').classList.add('hidden');
 
       const isJpeg = mime === 'image/jpeg' || mime === 'image/jpg';
+      const hasBitDepth = mime === 'image/jpeg' || mime === 'image/jpg' || mime === 'image/png';
       document.getElementById('cell-pixels').classList.remove('hidden');
       document.getElementById('cell-dpi').classList.remove('hidden');
+      document.getElementById('cell-bitdepth').classList.toggle('hidden', !hasBitDepth);
       document.getElementById('cell-quality').classList.toggle('hidden', !isJpeg);
       document.getElementById('cell-duration').classList.add('hidden');
       document.getElementById('cell-bitrate').classList.add('hidden');
@@ -909,6 +960,20 @@
         dpiEl.textContent  = 'Not embedded';
         dpiNote.textContent = supported ? 'No DPI metadata found in this file.' : 'DPI metadata parsing not supported for this format.';
         dpiNote.classList.remove('hidden');
+      }
+
+      if (hasBitDepth) {
+        const bdEl   = document.getElementById('stat-bitdepth');
+        const bdNote = document.getElementById('stat-bitdepth-note');
+        if (bitDepthInfo) {
+          bdEl.textContent   = bitDepthInfo.label;
+          bdNote.textContent = bitDepthInfo.note;
+          bdNote.classList.remove('hidden');
+        } else {
+          bdEl.textContent   = 'Unknown';
+          bdNote.textContent = 'Could not read bit depth from this file.';
+          bdNote.classList.remove('hidden');
+        }
       }
 
       if (isJpeg) {
@@ -981,6 +1046,7 @@
 
       document.getElementById('cell-pixels').classList.add('hidden');
       document.getElementById('cell-dpi').classList.add('hidden');
+      document.getElementById('cell-bitdepth').classList.add('hidden');
       document.getElementById('cell-quality').classList.add('hidden');
       document.getElementById('cell-duration').classList.remove('hidden');
       document.getElementById('cell-bitrate').classList.remove('hidden');
