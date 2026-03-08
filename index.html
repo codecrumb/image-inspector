@@ -152,6 +152,13 @@
           <p id="stat-dpi-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
 
+        <!-- JPEG-only -->
+        <div id="cell-quality" data-copyid="stat-quality" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">JPEG Quality</p>
+          <p id="stat-quality" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-quality-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+
         <!-- Video-only (hidden by default) -->
         <div id="cell-duration" data-copyid="stat-duration" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Duration</p>
@@ -426,6 +433,43 @@
       let s = '';
       for (let i = 0; i < len; i++) s += String.fromCharCode(view.getUint8(offset + i));
       return s;
+    }
+
+    // ── JPEG Quality estimator ────────────────────────────────────────────────
+    function parseJPEGQuality(buffer) {
+      const view = new DataView(buffer);
+      if (buffer.byteLength < 4 || readUint16BE(view, 0) !== 0xFFD8) return null;
+      let offset = 2;
+      while (offset + 4 <= buffer.byteLength) {
+        if (view.getUint8(offset) !== 0xFF) break;
+        const marker = readUint16BE(view, offset);
+        if (marker === 0xFFD9 || marker === 0xFFDA) break;
+        if (marker === 0xFFD8 || (marker >= 0xFFD0 && marker <= 0xFFD7)) { offset += 2; continue; }
+        const segLen = readUint16BE(view, offset + 2);
+        const segEnd = offset + 2 + segLen;
+        if (marker === 0xFFDB) {
+          let pos = offset + 4;
+          while (pos + 1 <= segEnd) {
+            const precId    = view.getUint8(pos++);
+            const precision = (precId >> 4) & 0xF; // 0=8-bit, 1=16-bit
+            const tableId   = precId & 0xF;
+            const step      = precision === 0 ? 1 : 2;
+            if (pos + 64 * step > segEnd) break;
+            const first = precision === 0 ? view.getUint8(pos) : readUint16BE(view, pos);
+            if (tableId === 0) {
+              // Reverse libjpeg formula (base coeff = 16)
+              const scale   = Math.round(first * 100 / 16);
+              const quality = Math.min(100, Math.max(1,
+                scale <= 100 ? Math.round((200 - scale) / 2) : Math.round(5000 / scale)
+              ));
+              return { label: `~${quality} / 100`, note: 'Estimated from luminance quantization table' };
+            }
+            pos += 64 * step;
+          }
+        }
+        offset = segEnd;
+      }
+      return null;
     }
 
     // ── Image DPI parsers (unchanged) ─────────────────────────────────────────
@@ -790,6 +834,9 @@
           if (mime === 'image/jpeg' || mime === 'image/jpg') dpiInfo = parseJPEGDPI(buffer);
           else if (mime === 'image/png') dpiInfo = parsePNGDPI(buffer);
 
+          let qualityInfo = null;
+          if (mime === 'image/jpeg' || mime === 'image/jpg') qualityInfo = parseJPEGQuality(buffer);
+
           // Full EXIF (JPEG only)
           let exifRows = [];
           if (mime === 'image/jpeg' || mime === 'image/jpg') {
@@ -801,7 +848,7 @@
           }
 
           const palette = extractPalette(colorCanvas);
-          showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer);
+          showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer, qualityInfo);
         };
         img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
         img.src = url;
@@ -809,7 +856,7 @@
       reader.readAsArrayBuffer(file);
     }
 
-    function showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer) {
+    function showImageResults(file, url, w, h, dpiInfo, exifRows, palette, buffer, qualityInfo) {
       currentFileType = 'image';
       currentExifRows = exifRows;
       currentPalette  = palette;
@@ -833,8 +880,10 @@
       preview.classList.remove('hidden');
       document.getElementById('videoThumb').classList.add('hidden');
 
+      const isJpeg = mime === 'image/jpeg' || mime === 'image/jpg';
       document.getElementById('cell-pixels').classList.remove('hidden');
       document.getElementById('cell-dpi').classList.remove('hidden');
+      document.getElementById('cell-quality').classList.toggle('hidden', !isJpeg);
       document.getElementById('cell-duration').classList.add('hidden');
       document.getElementById('cell-bitrate').classList.add('hidden');
       document.getElementById('cell-fps').classList.add('hidden');
@@ -860,6 +909,20 @@
         dpiEl.textContent  = 'Not embedded';
         dpiNote.textContent = supported ? 'No DPI metadata found in this file.' : 'DPI metadata parsing not supported for this format.';
         dpiNote.classList.remove('hidden');
+      }
+
+      if (isJpeg) {
+        const qualEl   = document.getElementById('stat-quality');
+        const qualNote = document.getElementById('stat-quality-note');
+        if (qualityInfo) {
+          qualEl.textContent   = qualityInfo.label;
+          qualNote.textContent = qualityInfo.note;
+          qualNote.classList.remove('hidden');
+        } else {
+          qualEl.textContent   = 'Not found';
+          qualNote.textContent = 'No quantization table in this file.';
+          qualNote.classList.remove('hidden');
+        }
       }
 
       checkSteganography(file, w, h);
@@ -918,6 +981,7 @@
 
       document.getElementById('cell-pixels').classList.add('hidden');
       document.getElementById('cell-dpi').classList.add('hidden');
+      document.getElementById('cell-quality').classList.add('hidden');
       document.getElementById('cell-duration').classList.remove('hidden');
       document.getElementById('cell-bitrate').classList.remove('hidden');
       document.getElementById('cell-fps').classList.remove('hidden');
