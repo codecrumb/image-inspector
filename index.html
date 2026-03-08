@@ -181,14 +181,8 @@
 
       <!-- Appended data scanner -->
       <div id="stegoScanSection" class="hidden border-t border-gray-200 dark:border-gray-700 px-4 py-3">
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">Appended Data</p>
-            <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Check for data hidden after the image end marker</p>
-          </div>
-          <button id="scanBtn" class="text-xs font-medium px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">Scan</button>
-        </div>
-        <div id="scanResult" class="hidden mt-3 text-xs"></div>
+        <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-2">Appended Data</p>
+        <div id="scanResult" class="text-xs"></div>
       </div>
 
       <!-- Color Palette -->
@@ -792,12 +786,11 @@
       currentMime     = file.type.toLowerCase();
 
       const scanSection = document.getElementById('stegoScanSection');
-      const scanResult  = document.getElementById('scanResult');
-      scanResult.classList.add('hidden');
-      scanResult.innerHTML = '';
       const mime = file.type.toLowerCase();
       if (mime === 'image/jpeg' || mime === 'image/jpg' || mime === 'image/png') {
         scanSection.classList.remove('hidden');
+        document.getElementById('scanResult').innerHTML = '<p class="text-gray-400 dark:text-gray-500">Scanning…</p>';
+        setTimeout(runAppendedDataScan, 0);
       } else {
         scanSection.classList.add('hidden');
       }
@@ -998,7 +991,7 @@
       chevron.classList.remove('open');
     }
 
-    document.getElementById('scanBtn').addEventListener('click', () => {
+    function runAppendedDataScan() {
       if (!currentBuffer) return;
       const view = new DataView(currentBuffer);
       const mime = currentMime;
@@ -1007,7 +1000,6 @@
       else if (mime === 'image/jpeg' || mime === 'image/jpg') appendOffset = findJPEGAppendedOffset(currentBuffer);
 
       const result = document.getElementById('scanResult');
-      result.classList.remove('hidden');
       if (appendOffset === null) {
         result.innerHTML = `<p class="text-green-600 dark:text-green-400 font-medium">✓ No data found after image end marker.</p>`;
       } else {
@@ -1025,7 +1017,7 @@
             <div class="mt-2">
               <button class="text-xs text-blue-500 dark:text-blue-400 hover:underline" onclick="this.nextElementSibling.classList.toggle('hidden');this.textContent=this.nextElementSibling.classList.contains('hidden')?'Show content':'Hide content'">Show content</button>
               <div class="hidden mt-2">
-                <pre class="text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono">${escaped}</pre>
+                <pre class="text-xs bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono">${escaped}</pre>
                 ${truncated ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">Showing first 8 KB of ${formatBytes(appendedBytes)}.</p>` : ''}
               </div>
             </div>`;
@@ -1037,7 +1029,7 @@
             <div class="mt-2">
               <button class="text-xs text-blue-500 dark:text-blue-400 hover:underline" onclick="this.nextElementSibling.classList.toggle('hidden');this.textContent=this.nextElementSibling.classList.contains('hidden')?'Show hex preview':'Hide hex preview'">Show hex preview</button>
               <div class="hidden mt-2">
-                <pre class="text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-32 overflow-auto font-mono break-all">${hex.trimEnd()}</pre>
+                <pre class="text-xs bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-32 overflow-auto font-mono break-all">${hex.trimEnd()}</pre>
                 <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">First ${hexBytes} bytes of ${formatBytes(appendedBytes)}.</p>
               </div>
             </div>`;
@@ -1045,7 +1037,7 @@
 
         result.innerHTML = `<p class="text-red-600 dark:text-red-400 font-medium">⚠ ${formatBytes(appendedBytes)} of ${type} found after image end marker (byte offset ${appendOffset.toLocaleString()}).</p>${previewHtml}`;
       }
-    });
+    }
 
     document.getElementById('exifToggle').addEventListener('click', () => {
       const content = document.getElementById('exifContent');
