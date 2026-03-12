@@ -1687,7 +1687,37 @@
           item.getAsString((text) => {
             let url = text.trim();
             if (!/^https?:\/\/.+/i.test(url)) return;
-            // Normalize bare imgur image URLs (e.g. imgur.com/AbCdEfG → i.imgur.com/AbCdEfG.jpg)
+
+            // Imgur album URL (imgur.com/a/xxxxx) → fetch all images via API
+            const imgurAlbum = url.match(/^https?:\/\/imgur\.com\/(?:a|gallery)\/([a-zA-Z0-9]+)/);
+            if (imgurAlbum) {
+              fetch(`https://api.imgur.com/3/album/${imgurAlbum[1]}/images`, {
+                headers: { 'Authorization': 'Client-ID d297fd441566f99' }
+              })
+                .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+                .then(json => {
+                  const images = json.data;
+                  if (!images?.length) return;
+                  const fetchImage = (i) => {
+                    if (i >= images.length) return;
+                    const img = images[i];
+                    const directUrl = `https://i.imgur.com/${img.id}.jpeg`;
+                    fetch(directUrl)
+                      .then(r => r.blob())
+                      .then(blob => {
+                        const mime = img.type || 'image/jpeg';
+                        analyzeFile(new File([blob], `${img.id}.jpeg`, { type: mime }));
+                        fetchImage(i + 1);
+                      })
+                      .catch(() => fetchImage(i + 1));
+                  };
+                  fetchImage(0);
+                })
+                .catch(() => {});
+              return;
+            }
+
+            // Normalize bare imgur image URLs (e.g. imgur.com/AbCdEfG → i.imgur.com/AbCdEfG.jpeg)
             const imgurDirect = url.match(/^https?:\/\/imgur\.com\/([a-zA-Z0-9]+)$/);
             const fetchUrl = imgurDirect ? `https://i.imgur.com/${imgurDirect[1]}.jpeg` : url;
             const tryFetch = (u) => fetch(u)
@@ -1703,7 +1733,7 @@
                 });
               });
             tryFetch(fetchUrl)
-              .catch(() => fetchUrl !== url ? tryFetch(url).catch(() => {}) : Promise.resolve()); // fall back to original URL if imgur rewrite failed
+              .catch(() => fetchUrl !== url ? tryFetch(url).catch(() => {}) : Promise.resolve());
           });
           return;
         }
