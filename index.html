@@ -1685,21 +1685,25 @@
       for (const item of items) {
         if (item.kind === 'string' && item.type === 'text/plain') {
           item.getAsString((text) => {
-            const url = text.trim();
+            let url = text.trim();
             if (!/^https?:\/\/.+/i.test(url)) return;
-            fetch(url)
+            // Normalize bare imgur image URLs (e.g. imgur.com/AbCdEfG → i.imgur.com/AbCdEfG.jpg)
+            const imgurDirect = url.match(/^https?:\/\/imgur\.com\/([a-zA-Z0-9]+)$/);
+            const fetchUrl = imgurDirect ? `https://i.imgur.com/${imgurDirect[1]}.jpeg` : url;
+            const tryFetch = (u) => fetch(u)
               .then((res) => {
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const ct = res.headers.get('content-type') || '';
                 if (!ct.startsWith('image/') && !ct.startsWith('video/')) throw new Error('Not an image or video URL');
                 return res.blob().then((blob) => {
-                  const ext = url.split('?')[0].split('.').pop().toLowerCase();
+                  const ext = u.split('?')[0].split('.').pop().toLowerCase();
                   const mime = ct.split(';')[0].trim();
-                  const name = url.split('/').pop().split('?')[0] || `pasted.${ext}`;
+                  const name = u.split('/').pop().split('?')[0] || `pasted.${ext}`;
                   analyzeFile(new File([blob], name, { type: mime }));
                 });
-              })
-              .catch(() => {}); // silently ignore non-image URLs
+              });
+            tryFetch(fetchUrl)
+              .catch(() => fetchUrl !== url ? tryFetch(url).catch(() => {}) : Promise.resolve()); // fall back to original URL if imgur rewrite failed
           });
           return;
         }
