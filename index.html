@@ -1761,16 +1761,16 @@
               return;
             }
 
-            fetch(fetchUrl)
+            fetch(url)
               .then((res) => {
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const ct = res.headers.get('content-type') || '';
                 if (!ct.startsWith('image/') && !ct.startsWith('video/')) throw new Error('Not an image or video URL');
                 return res.blob().then((blob) => {
-                  const ext = fetchUrl.split('?')[0].split('.').pop().toLowerCase();
+                  const ext = url.split('?')[0].split('.').pop().toLowerCase();
                   const mime = ct.split(';')[0].trim();
-                  const name = fetchUrl.split('/').pop().split('?')[0] || `pasted.${ext}`;
-                  analyzeFile(new File([blob], name, { type: mime }), fetchUrl);
+                  const name = url.split('/').pop().split('?')[0] || `pasted.${ext}`;
+                  analyzeFile(new File([blob], name, { type: mime }), url);
                 });
               })
               .catch(() => {});
