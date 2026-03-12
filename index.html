@@ -1698,20 +1698,10 @@
                 .then(json => {
                   const images = json.data;
                   if (!images?.length) return;
-                  const fetchImage = (i) => {
-                    if (i >= images.length) return;
-                    const img = images[i];
-                    const directUrl = `https://i.imgur.com/${img.id}.jpeg`;
-                    fetch(directUrl)
-                      .then(r => r.blob())
-                      .then(blob => {
-                        const mime = img.type || 'image/jpeg';
-                        analyzeFile(new File([blob], `${img.id}.jpeg`, { type: mime }));
-                        fetchImage(i + 1);
-                      })
-                      .catch(() => fetchImage(i + 1));
-                  };
-                  fetchImage(0);
+                  const img = images[0];
+                  fetch(`https://i.imgur.com/${img.id}.jpeg`)
+                    .then(r => r.blob())
+                    .then(blob => analyzeFile(new File([blob], `${img.id}.jpeg`, { type: img.type || 'image/jpeg' })));
                 })
                 .catch(() => {});
               return;
