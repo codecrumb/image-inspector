@@ -1691,7 +1691,7 @@
         return;
       }
 
-      // Local file: upload to 0x0.st, then redirect to uploadbyurl
+      // Local file: upload via proxy worker, then redirect to uploadbyurl
       const preview = document.getElementById('preview');
       if (!preview._prevURL) return;
 
@@ -1704,12 +1704,12 @@
         const formData = new FormData();
         formData.append('file', new File([blob], `image.${ext}`, { type: blob.type }));
 
-        const res = await fetch('https://0x0.st', { method: 'POST', body: formData });
+        const res = await fetch('/api/lens-upload', { method: 'POST', body: formData });
         if (!res.ok) throw new Error('Upload failed');
         const url = (await res.text()).trim();
         window.open('https://lens.google.com/uploadbyurl?url=' + encodeURIComponent(url), '_blank');
       } catch (err) {
-        alert('Could not upload to 0x0.st: ' + err.message);
+        alert('Could not upload image: ' + err.message);
       } finally {
         btn.disabled = false;
         btn.innerHTML = originalHTML;
