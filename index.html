@@ -1737,42 +1737,43 @@
             let url = text.trim();
             if (!/^https?:\/\/.+/i.test(url)) return;
 
-            // Imgur album URL (imgur.com/a/xxxxx) → fetch all images via API
+            const imgurExt = (mime) => ({ 'video/mp4': 'mp4', 'video/webm': 'webm', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' }[mime] || 'jpeg');
+            const imgurHeaders = { 'Authorization': 'Client-ID d297fd441566f99' };
+            const fetchImgur = (id, mime) => { const ext = imgurExt(mime); return fetch(`https://i.imgur.com/${id}.${ext}`).then(r => r.blob()).then(blob => analyzeFile(new File([blob], `${id}.${ext}`, { type: mime || 'image/jpeg' }))); };
+
+            // Imgur album URL (imgur.com/a/xxxxx) → fetch first image via API
             const imgurAlbum = url.match(/^https?:\/\/imgur\.com\/(?:a|gallery)\/([a-zA-Z0-9]+)/);
             if (imgurAlbum) {
-              fetch(`https://api.imgur.com/3/album/${imgurAlbum[1]}/images`, {
-                headers: { 'Authorization': 'Client-ID d297fd441566f99' }
-              })
+              fetch(`https://api.imgur.com/3/album/${imgurAlbum[1]}/images`, { headers: imgurHeaders })
                 .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
-                .then(json => {
-                  const images = json.data;
-                  if (!images?.length) return;
-                  const img = images[0];
-                  fetch(`https://i.imgur.com/${img.id}.jpeg`)
-                    .then(r => r.blob())
-                    .then(blob => analyzeFile(new File([blob], `${img.id}.jpeg`, { type: img.type || 'image/jpeg' })));
-                })
+                .then(json => { const img = json.data?.[0]; if (img) fetchImgur(img.id, img.type); })
                 .catch(() => {});
               return;
             }
 
-            // Normalize bare imgur image URLs (e.g. imgur.com/AbCdEfG → i.imgur.com/AbCdEfG.jpeg)
+            // Bare imgur image URL (imgur.com/AbCdEfG) → look up type via API then fetch
             const imgurDirect = url.match(/^https?:\/\/imgur\.com\/([a-zA-Z0-9]+)$/);
-            const fetchUrl = imgurDirect ? `https://i.imgur.com/${imgurDirect[1]}.jpeg` : url;
-            const tryFetch = (u) => fetch(u)
+            if (imgurDirect) {
+              fetch(`https://api.imgur.com/3/image/${imgurDirect[1]}`, { headers: imgurHeaders })
+                .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+                .then(json => fetchImgur(json.data.id, json.data.type))
+                .catch(() => fetchImgur(imgurDirect[1], 'image/jpeg')); // fall back to jpeg if API fails
+              return;
+            }
+
+            fetch(fetchUrl)
               .then((res) => {
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const ct = res.headers.get('content-type') || '';
                 if (!ct.startsWith('image/') && !ct.startsWith('video/')) throw new Error('Not an image or video URL');
                 return res.blob().then((blob) => {
-                  const ext = u.split('?')[0].split('.').pop().toLowerCase();
+                  const ext = fetchUrl.split('?')[0].split('.').pop().toLowerCase();
                   const mime = ct.split(';')[0].trim();
-                  const name = u.split('/').pop().split('?')[0] || `pasted.${ext}`;
-                  analyzeFile(new File([blob], name, { type: mime }), u);
+                  const name = fetchUrl.split('/').pop().split('?')[0] || `pasted.${ext}`;
+                  analyzeFile(new File([blob], name, { type: mime }), fetchUrl);
                 });
-              });
-            tryFetch(fetchUrl)
-              .catch(() => fetchUrl !== url ? tryFetch(url).catch(() => {}) : Promise.resolve());
+              })
+              .catch(() => {});
           });
           return;
         }
