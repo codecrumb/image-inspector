@@ -104,11 +104,19 @@
         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
       </svg>
       <p class="text-gray-500 dark:text-gray-400 text-sm">Drag &amp; drop an image or video here, or</p>
-      <label class="mt-2 inline-block cursor-pointer">
-        <span class="mt-2 px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">Browse file</span>
-        <input id="fileInput" type="file" accept="image/*,video/*" class="hidden" />
-      </label>
-      <p id="pasteHint" class="mt-2 text-xs text-gray-400 dark:text-gray-500"></p>
+      <div class="mt-2 flex items-center justify-center gap-2 flex-wrap">
+        <label class="inline-block cursor-pointer">
+          <span class="px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">Browse file</span>
+          <input id="fileInput" type="file" accept="image/*,video/*" class="hidden" />
+        </label>
+        <button id="pasteBtn" class="sm:hidden px-4 py-1.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors flex items-center gap-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+          </svg>
+          Paste
+        </button>
+      </div>
+      <p id="pasteHint" class="mt-2 text-xs text-gray-400 dark:text-gray-500 hidden sm:block"></p>
     </div>
 
     <!-- Results -->
@@ -1651,7 +1659,7 @@
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
     fileInput.addEventListener('change', () => { if (fileInput.files[0]) analyzeFile(fileInput.files[0]); });
-    dropzone.addEventListener('click', (e) => { if (e.target === fileInput || e.target.closest('label')) return; fileInput.click(); });
+    dropzone.addEventListener('click', (e) => { if (e.target === fileInput || e.target.closest('label') || e.target.closest('#pasteBtn')) return; fileInput.click(); });
 
     // ── Full-page drag-and-drop ───────────────────────────────────────────────
     const pageDropOverlay = document.getElementById('pageDropOverlay');
@@ -1778,6 +1786,46 @@
           return;
         }
       }
+    });
+
+    // ── Paste button ──────────────────────────────────────────────────────────
+    document.getElementById('pasteBtn').addEventListener('click', async () => {
+      if (!navigator.clipboard?.read) {
+        alert('Clipboard access is not supported in this browser. Try pasting with Ctrl+V / Cmd+V instead.');
+        return;
+      }
+      let items;
+      try {
+        items = await navigator.clipboard.read();
+      } catch {
+        alert('Clipboard permission denied. Try pasting with Ctrl+V / Cmd+V instead.');
+        return;
+      }
+      for (const item of items) {
+        const imageType = item.types.find(t => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const ext = imageType.split('/')[1] || 'png';
+          analyzeFile(new File([blob], `pasted.${ext}`, { type: imageType }));
+          return;
+        }
+      }
+      // No image found — check for a text/plain URL
+      for (const item of items) {
+        if (item.types.includes('text/plain')) {
+          const blob = await item.getType('text/plain');
+          const text = await blob.text();
+          const url = text.trim();
+          if (/^https?:\/\/.+/i.test(url)) {
+            // Synthesize a ClipboardEvent-style paste and re-dispatch as text paste
+            const dt = new DataTransfer();
+            dt.items.add(url, 'text/plain');
+            document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }));
+            return;
+          }
+        }
+      }
+      alert('No image or image URL found in clipboard.');
     });
   </script>
 </body>
