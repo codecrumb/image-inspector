@@ -1749,10 +1749,11 @@
             const imgurHeaders = { 'Authorization': 'Client-ID d297fd441566f99' };
             const fetchImgur = (id, mime) => { const ext = imgurExt(mime); return fetch(`https://i.imgur.com/${id}.${ext}`).then(r => r.blob()).then(blob => analyzeFile(new File([blob], `${id}.${ext}`, { type: mime || 'image/jpeg' }))); };
 
-            // Imgur album URL (imgur.com/a/xxxxx) → fetch first image via API
-            const imgurAlbum = url.match(/^https?:\/\/imgur\.com\/(?:a|gallery)\/([a-zA-Z0-9]+)/);
+            // Imgur album URL (imgur.com/a/xxxxx or imgur.com/a/title-slug-xxxxx) → fetch first image via API
+            const imgurAlbum = url.match(/^https?:\/\/imgur\.com\/(?:a|gallery)\/([\w-]+)/);
             if (imgurAlbum) {
-              fetch(`https://api.imgur.com/3/album/${imgurAlbum[1]}/images`, { headers: imgurHeaders })
+              const albumId = imgurAlbum[1].split('-').pop();
+              fetch(`https://api.imgur.com/3/album/${albumId}/images`, { headers: imgurHeaders })
                 .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
                 .then(json => { const img = json.data?.[0]; if (img) fetchImgur(img.id, img.type); })
                 .catch(() => {});
