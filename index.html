@@ -1684,6 +1684,11 @@
             document.getElementById('exportBtn').click();
           }
           break;
+        case 'o':
+          if (!lightboxOpen && !histOpen) {
+            document.getElementById('fileInput').click();
+          }
+          break;
       }
     });
 
