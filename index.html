@@ -139,6 +139,7 @@
         <div data-copyid="stat-size" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">File Size</p>
           <p id="stat-size" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-size-sub" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
         <div data-copyid="stat-resolution" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Resolution</p>
@@ -1117,6 +1118,13 @@
 
       document.getElementById('stat-format').textContent = formatMimeType(file.type);
       document.getElementById('stat-size').textContent   = formatBytes(file.size);
+      const sizeSub = document.getElementById('stat-size-sub');
+      if (file.size >= 1024) {
+        sizeSub.textContent = `(${file.size.toLocaleString()} B)`;
+        sizeSub.classList.remove('hidden');
+      } else {
+        sizeSub.classList.add('hidden');
+      }
       document.getElementById('stat-resolution').textContent = `${w} × ${h} px`;
       document.getElementById('stat-aspect').textContent = aspectRatio(w, h);
 
@@ -1241,6 +1249,13 @@
 
       document.getElementById('stat-format').textContent     = formatMimeType(file.type);
       document.getElementById('stat-size').textContent       = formatBytes(file.size);
+      const sizeSub2 = document.getElementById('stat-size-sub');
+      if (file.size >= 1024) {
+        sizeSub2.textContent = `(${file.size.toLocaleString()} B)`;
+        sizeSub2.classList.remove('hidden');
+      } else {
+        sizeSub2.classList.add('hidden');
+      }
       document.getElementById('stat-resolution').textContent = w && h ? `${w} × ${h} px` : '—';
       document.getElementById('stat-aspect').textContent     = w && h ? aspectRatio(w, h) : '—';
       document.getElementById('stat-duration').textContent   = formatDuration(duration);
