@@ -84,6 +84,7 @@
         id="themeToggle"
         class="absolute right-0 p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
         aria-label="Toggle dark mode"
+        title="Toggle theme (T)"
       >
         <svg id="iconSun" class="hidden w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
@@ -124,7 +125,7 @@
 
       <!-- Preview -->
       <div class="flex items-center justify-center bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-700 p-4">
-        <img id="preview" class="max-h-48 max-w-full rounded object-contain shadow cursor-zoom-in" alt="Preview" />
+        <img id="preview" class="max-h-48 max-w-full rounded object-contain shadow cursor-zoom-in" alt="Preview" title="Open lightbox (Enter)" />
         <canvas id="videoThumb" class="hidden max-h-48 max-w-full rounded object-contain shadow cursor-zoom-in"></canvas>
       </div>
 
@@ -231,13 +232,13 @@
         <!-- Histogram -->
         <div id="histogramWrap" class="hidden">
           <p class="text-xs text-gray-400 dark:text-gray-500 mb-1.5">Histogram</p>
-          <canvas id="histogramCanvas" class="w-full rounded cursor-pointer" height="60" title="Click to expand"></canvas>
+          <canvas id="histogramCanvas" class="w-full rounded cursor-pointer" height="60" title="Expand histogram (H)"></canvas>
         </div>
       </div>
 
       <!-- EXIF Data (collapsible, images only) -->
       <div id="exifSection" class="hidden border-t border-gray-200 dark:border-gray-700">
-        <button id="exifToggle" class="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+        <button id="exifToggle" class="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors" title="Toggle EXIF (E)">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">EXIF Data</p>
           <svg id="exifChevron" class="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
@@ -250,7 +251,7 @@
 
       <!-- Export -->
       <div class="border-t border-gray-200 dark:border-gray-700 p-4">
-        <button id="exportBtn" class="relative w-full py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+        <button id="exportBtn" class="relative w-full py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors" title="Copy summary (C)">
           Copy Summary
         </button>
         <button id="lensBtn" class="hidden relative w-full mt-2 py-2 rounded-lg text-sm font-medium text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center justify-center gap-2">
