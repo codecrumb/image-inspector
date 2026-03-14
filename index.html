@@ -1648,6 +1648,45 @@
       if (e.key === 'Escape' && !lightboxEl.classList.contains('hidden')) closeLightbox();
     });
 
+    // ── Keyboard shortcuts ────────────────────────────────────────────────────
+    document.addEventListener('keydown', (e) => {
+      // Skip when typing in an input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+      // Skip modifier combos
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const resultsVisible = !document.getElementById('results').classList.contains('hidden');
+      const lightboxOpen   = !lightboxEl.classList.contains('hidden');
+      const histOpen       = !document.getElementById('histModal').classList.contains('hidden');
+
+      switch (e.key.toLowerCase()) {
+        case 't':
+          toggle.click();
+          break;
+        case 'enter':
+          if (resultsVisible && !lightboxOpen && !histOpen) {
+            const preview = document.getElementById('preview');
+            if (!preview.classList.contains('hidden')) openLightbox(preview);
+          }
+          break;
+        case 'h':
+          if (resultsVisible && !lightboxOpen) {
+            histOpen ? closeHistogramModal() : openHistogramModal();
+          }
+          break;
+        case 'e':
+          if (resultsVisible && !lightboxOpen && !histOpen) {
+            document.getElementById('exifToggle').click();
+          }
+          break;
+        case 'c':
+          if (resultsVisible && !lightboxOpen && !histOpen) {
+            document.getElementById('exportBtn').click();
+          }
+          break;
+      }
+    });
+
     document.getElementById('preview').addEventListener('click', function () {
       if (!this.classList.contains('hidden')) openLightbox(this);
     });
