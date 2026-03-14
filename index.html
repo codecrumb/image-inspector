@@ -234,6 +234,36 @@
           <p class="text-xs text-gray-400 dark:text-gray-500 mb-1.5">Histogram</p>
           <canvas id="histogramCanvas" class="w-full rounded cursor-pointer" height="60" title="Expand histogram (H)"></canvas>
         </div>
+
+        <!-- Image metrics: brightness, contrast, sharpness, noise -->
+        <div id="imageMetricsWrap" class="hidden mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5">
+          <div>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">Brightness</p>
+            <div class="flex items-center gap-2">
+              <div class="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                <div id="metricBrightnessBar" class="h-full rounded-full bg-yellow-400 dark:bg-yellow-500 transition-all" style="width:0%"></div>
+              </div>
+              <span id="metricBrightnessLabel" class="text-xs text-gray-500 dark:text-gray-400 w-20 text-right shrink-0"></span>
+            </div>
+          </div>
+          <div>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">Contrast</p>
+            <div class="flex items-center gap-2">
+              <div class="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                <div id="metricContrastBar" class="h-full rounded-full bg-blue-400 dark:bg-blue-500 transition-all" style="width:0%"></div>
+              </div>
+              <span id="metricContrastLabel" class="text-xs text-gray-500 dark:text-gray-400 w-20 text-right shrink-0"></span>
+            </div>
+          </div>
+          <div>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">Sharpness</p>
+            <span id="metricSharpnessBadge" class="text-xs font-medium px-2 py-0.5 rounded-full"></span>
+          </div>
+          <div>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">Noise</p>
+            <span id="metricNoiseBadge" class="text-xs font-medium px-2 py-0.5 rounded-full"></span>
+          </div>
+        </div>
       </div>
 
       <!-- EXIF Data (collapsible, images only) -->
@@ -868,9 +898,59 @@
         const avgHex = pixCount ? '#' + [totalR, totalG, totalB]
           .map(v => Math.round(v / pixCount).toString(16).padStart(2, '0')).join('') : null;
 
-        return { palette: paletteHex, avgColor: avgHex, histR, histG, histB, histL };
+        // Build luminance array for spatial analysis
+        const lum = new Float32Array(SIZE * SIZE);
+        for (let i = 0; i < data.length; i += 4) {
+          lum[i >> 2] = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+        }
+
+        // Brightness: mean luminance
+        let lumSum = 0;
+        for (let lv = 0; lv < 256; lv++) lumSum += lv * histL[lv];
+        const avgLum = pixCount ? lumSum / pixCount : 0;
+
+        // Contrast: std dev of luminance
+        let lum2Sum = 0;
+        for (let lv = 0; lv < 256; lv++) lum2Sum += lv * lv * histL[lv];
+        const lumStdDev = pixCount ? Math.sqrt(Math.max(0, lum2Sum / pixCount - avgLum * avgLum)) : 0;
+
+        // Sharpness: variance of Laplacian over interior pixels
+        let lapSumSq = 0, lapCount = 0;
+        for (let y = 1; y < SIZE - 1; y++) {
+          for (let x = 1; x < SIZE - 1; x++) {
+            const c = y * SIZE + x;
+            const lap = lum[c - SIZE] + lum[c + SIZE] + lum[c - 1] + lum[c + 1] - 4 * lum[c];
+            lapSumSq += lap * lap;
+            lapCount++;
+          }
+        }
+        const lapVariance = lapCount ? lapSumSq / lapCount : 0;
+
+        // Noise: minimum local variance across 10×10 blocks (noise floor in smooth regions)
+        const BSIZE = 10;
+        let minLocalVar = Infinity;
+        for (let by = 0; by + BSIZE <= SIZE; by += BSIZE) {
+          for (let bx = 0; bx + BSIZE <= SIZE; bx += BSIZE) {
+            let s = 0, s2 = 0;
+            for (let dy = 0; dy < BSIZE; dy++) {
+              for (let dx = 0; dx < BSIZE; dx++) {
+                const v = lum[(by + dy) * SIZE + (bx + dx)];
+                s += v; s2 += v * v;
+              }
+            }
+            const n = BSIZE * BSIZE;
+            const blockMean = s / n;
+            const blockVar = s2 / n - blockMean * blockMean;
+            if (blockVar < minLocalVar) minLocalVar = blockVar;
+          }
+        }
+        const noiseSigma = Math.sqrt(Math.max(0, minLocalVar));
+
+        return { palette: paletteHex, avgColor: avgHex, histR, histG, histB, histL,
+                 brightness: avgLum, contrast: lumStdDev, lapVariance, noiseSigma };
       } catch (_) {
-        return { palette: [], avgColor: null, histR: null, histG: null, histB: null, histL: null };
+        return { palette: [], avgColor: null, histR: null, histG: null, histB: null, histL: null,
+                 brightness: null, contrast: null, lapVariance: null, noiseSigma: null };
       }
     }
 
@@ -1249,6 +1329,58 @@
       // Histogram
       _lastHistData = histR ? { histR, histG, histB, histL } : null;
       drawHistogram();
+
+      // Image metrics
+      const metricsWrap = document.getElementById('imageMetricsWrap');
+      if (visualData.brightness !== null && visualData.brightness !== undefined) {
+        metricsWrap.classList.remove('hidden');
+
+        // Brightness bar (0-255 → 0-100%)
+        const bPct = Math.round(visualData.brightness / 255 * 100);
+        document.getElementById('metricBrightnessBar').style.width = bPct + '%';
+        const bLabel = visualData.brightness < 51 ? 'Very Dark'
+          : visualData.brightness < 101 ? 'Dark'
+          : visualData.brightness < 161 ? 'Moderate'
+          : visualData.brightness < 211 ? 'Bright' : 'Very Bright';
+        document.getElementById('metricBrightnessLabel').textContent = bLabel;
+
+        // Contrast bar (std dev, 0-90 → 0-100%)
+        const cPct = Math.min(100, Math.round(visualData.contrast / 90 * 100));
+        document.getElementById('metricContrastBar').style.width = cPct + '%';
+        const cLabel = visualData.contrast < 16 ? 'Very Low'
+          : visualData.contrast < 36 ? 'Low'
+          : visualData.contrast < 61 ? 'Moderate'
+          : visualData.contrast < 91 ? 'High' : 'Very High';
+        document.getElementById('metricContrastLabel').textContent = cLabel;
+
+        // Sharpness badge
+        const sharpEl = document.getElementById('metricSharpnessBadge');
+        const lv = visualData.lapVariance;
+        const sharpLabel = lv < 15 ? 'Blurry' : lv < 80 ? 'Moderate' : 'Sharp';
+        const sharpCls = lv < 15
+          ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400'
+          : lv < 80
+          ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400'
+          : 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400';
+        sharpEl.textContent = sharpLabel;
+        sharpEl.className = 'text-xs font-medium px-2 py-0.5 rounded-full ' + sharpCls;
+
+        // Noise badge
+        const noiseEl = document.getElementById('metricNoiseBadge');
+        const ns = visualData.noiseSigma;
+        const noiseLabel = ns < 3 ? 'Clean' : ns < 8 ? 'Low' : ns < 20 ? 'Moderate' : 'Noisy';
+        const noiseCls = ns < 3
+          ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
+          : ns < 8
+          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400'
+          : ns < 20
+          ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400'
+          : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400';
+        noiseEl.textContent = noiseLabel;
+        noiseEl.className = 'text-xs font-medium px-2 py-0.5 rounded-full ' + noiseCls;
+      } else {
+        metricsWrap.classList.add('hidden');
+      }
     }
 
     function drawHistogram() {
