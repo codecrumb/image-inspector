@@ -1803,11 +1803,11 @@
         return;
       }
       for (const item of items) {
-        const imageType = item.types.find(t => t.startsWith('image/'));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          const ext = imageType.split('/')[1] || 'png';
-          analyzeFile(new File([blob], `pasted.${ext}`, { type: imageType }));
+        const mediaType = item.types.find(t => t.startsWith('image/') || t.startsWith('video/'));
+        if (mediaType) {
+          const blob = await item.getType(mediaType);
+          const ext = mediaType.split('/')[1] || 'png';
+          analyzeFile(new File([blob], `pasted.${ext}`, { type: mediaType }));
           return;
         }
       }
