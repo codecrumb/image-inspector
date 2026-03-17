@@ -1982,7 +1982,7 @@
             };
             fetchAndAnalyze(url)
               .catch(() => fetchAndAnalyze('https://corsproxy.io/?' + encodeURIComponent(url)))
-              .catch(() => fetchAndAnalyze('https://api.allorigins.win/raw?url=' + encodeURIComponent(url)))
+              .catch(() => fetchAndAnalyze('https://images.weserv.nl/?url=' + encodeURIComponent(url)))
               .catch(() => {});
           });
           return;
