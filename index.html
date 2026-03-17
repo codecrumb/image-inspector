@@ -1962,18 +1962,26 @@
               return;
             }
 
-            fetch(url)
-              .then((res) => {
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const ct = res.headers.get('content-type') || '';
-                if (!ct.startsWith('image/') && !ct.startsWith('video/')) throw new Error('Not an image or video URL');
-                return res.blob().then((blob) => {
-                  const ext = url.split('?')[0].split('.').pop().toLowerCase();
-                  const mime = ct.split(';')[0].trim();
-                  const name = url.split('/').pop().split('?')[0] || `pasted.${ext}`;
-                  analyzeFile(new File([blob], name, { type: mime }), url);
+            // Unwrap reddit.com/media?url=<encoded> wrapper
+            const redditMedia = url.match(/^https?:\/\/(?:www\.)?reddit\.com\/media\?url=(.+)/i);
+            if (redditMedia) url = decodeURIComponent(redditMedia[1]);
+
+            const fetchAndAnalyze = (fetchUrl) => {
+              return fetch(fetchUrl)
+                .then((res) => {
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  const ct = res.headers.get('content-type') || '';
+                  if (!ct.startsWith('image/') && !ct.startsWith('video/')) throw new Error('Not an image or video URL');
+                  return res.blob().then((blob) => {
+                    const ext = url.split('?')[0].split('.').pop().toLowerCase();
+                    const mime = ct.split(';')[0].trim();
+                    const name = url.split('/').pop().split('?')[0] || `pasted.${ext}`;
+                    analyzeFile(new File([blob], name, { type: mime }), url);
+                  });
                 });
-              })
+            };
+            fetchAndAnalyze(url)
+              .catch(() => fetchAndAnalyze('https://corsproxy.io/?' + encodeURIComponent(url)))
               .catch(() => {});
           });
           return;
