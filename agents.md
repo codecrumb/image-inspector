@@ -1,5 +1,7 @@
 # AGENTS.md
 
+@workflow.md
+
 This file provides guidance to AI coding agents when working with this repository.
 
 ## Running the App

@@ -2029,6 +2029,30 @@
       }
       alert('No image or image URL found in clipboard.');
     });
+
+    // ── Load from ?q=<url> query parameter ────────────────────────────────────
+    (function () {
+      const params = new URLSearchParams(window.location.search);
+      const q = params.get('q');
+      if (!q) return;
+      const url = q;
+      const fetchAndAnalyze = (fetchUrl) =>
+        fetch(fetchUrl).then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.startsWith('image/') && !ct.startsWith('video/')) throw new Error('Not an image or video URL');
+          return res.blob().then((blob) => {
+            const ext = url.split('?')[0].split('.').pop().toLowerCase();
+            const mime = ct.split(';')[0].trim();
+            const name = url.split('/').pop().split('?')[0] || `image.${ext}`;
+            analyzeFile(new File([blob], name, { type: mime }), url);
+          });
+        });
+      fetchAndAnalyze(url)
+        .catch(() => fetchAndAnalyze('https://corsproxy.io/?' + encodeURIComponent(url)))
+        .catch(() => fetchAndAnalyze('https://images.weserv.nl/?url=' + encodeURIComponent(url)))
+        .catch(() => {});
+    })();
   </script>
 </body>
 </html>
