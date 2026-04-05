@@ -31,6 +31,11 @@
   <link rel="manifest" href="site.webmanifest" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = { darkMode: 'class' }</script>
+  <script type="module">
+    import exifr from 'https://cdn.jsdelivr.net/npm/exifr/dist/full.esm.js';
+    window.exifrLib = exifr;
+    window.dispatchEvent(new Event('exifr-ready'));
+  </script>
   <style>
     .drop-active { border-color: #6366f1; background-color: #eef2ff; }
     .dark .drop-active { border-color: #818cf8; background-color: #1e1b4b; }
@@ -70,8 +75,8 @@
     }
     .dark .copy-tip { background: #f9fafb; color: #111827; }
 
-    #exifChevron { transition: transform 0.2s ease; }
-    #exifChevron.open { transform: rotate(180deg); }
+    #exifChevron, #iptcChevron, #iccChevron { transition: transform 0.2s ease; }
+    #exifChevron.open, #iptcChevron.open, #iccChevron.open { transform: rotate(180deg); }
     #lightboxCanvas { image-rendering: pixelated; }
   </style>
 </head>
@@ -277,6 +282,32 @@
         </button>
         <div id="exifContent" class="hidden px-4 pb-4">
           <div id="exifRows" class="divide-y divide-gray-100 dark:divide-gray-700"></div>
+        </div>
+      </div>
+
+      <!-- IPTC Data (collapsible, populated async by exifr) -->
+      <div id="iptcSection" class="hidden border-t border-gray-200 dark:border-gray-700">
+        <button id="iptcToggle" class="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">IPTC / Caption</p>
+          <svg id="iptcChevron" class="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        <div id="iptcContent" class="hidden px-4 pb-4">
+          <div id="iptcRows" class="divide-y divide-gray-100 dark:divide-gray-700"></div>
+        </div>
+      </div>
+
+      <!-- ICC / Color Profile (collapsible, populated async by exifr) -->
+      <div id="iccSection" class="hidden border-t border-gray-200 dark:border-gray-700">
+        <button id="iccToggle" class="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">Color Profile</p>
+          <svg id="iccChevron" class="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        <div id="iccContent" class="hidden px-4 pb-4">
+          <div id="iccRows" class="divide-y divide-gray-100 dark:divide-gray-700"></div>
         </div>
       </div>
 
@@ -1073,6 +1104,7 @@
 
           const visualData = extractVisualData(colorCanvas);
           showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo);
+          runExifrEnrichment(file);
         };
         img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
         img.src = url;
@@ -1087,6 +1119,8 @@
       currentPalette  = visualData.palette;
       currentBuffer   = buffer ?? null;
       currentMime     = file.type.toLowerCase();
+      document.getElementById('iptcSection').classList.add('hidden');
+      document.getElementById('iccSection').classList.add('hidden');
 
       const scanSection = document.getElementById('stegoScanSection');
       const mime = file.type.toLowerCase();
@@ -1665,6 +1699,138 @@
       const hidden = content.classList.toggle('hidden');
       chevron.classList.toggle('open', !hidden);
     });
+
+    document.getElementById('iptcToggle').addEventListener('click', () => {
+      const content = document.getElementById('iptcContent');
+      const chevron = document.getElementById('iptcChevron');
+      chevron.classList.toggle('open', content.classList.toggle('hidden') === false);
+    });
+
+    document.getElementById('iccToggle').addEventListener('click', () => {
+      const content = document.getElementById('iccContent');
+      const chevron = document.getElementById('iccChevron');
+      chevron.classList.toggle('open', content.classList.toggle('hidden') === false);
+    });
+
+    // ── exifr enrichment (runs async after initial render) ────────────────────
+    function runExifrEnrichment(file) {
+      const opts = { iptc: true, icc: true, exif: true, tiff: true, jfif: true, xmp: false };
+      const run = (lib) => lib.parse(file, opts).then(data => { if (data) enrichWithExifr(data); }).catch(() => {});
+      if (window.exifrLib) {
+        run(window.exifrLib);
+      } else {
+        window.addEventListener('exifr-ready', () => run(window.exifrLib), { once: true });
+      }
+    }
+
+    function enrichWithExifr(data) {
+      // Helper: try multiple key variants, return first non-null
+      const g = (...keys) => { for (const k of keys) { const v = data[k]; if (v != null && v !== '') return v; } return null; };
+
+      // Supplement EXIF with fields the custom parser doesn't extract
+      const extraExifFields = [
+        ['JFIFVersion',       'JFIF Version'],
+        ['EncodingProcess',   'Encoding'],
+        ['YCbCrSubSampling',  'YCbCr Subsampling'],
+        ['LensMake',          'Lens Make'],
+        ['LensModel',         'Lens Model'],
+        ['LensInfo',          'Lens Info'],
+        ['BodySerialNumber',  'Camera Serial'],
+        ['LensSerialNumber',  'Lens Serial'],
+        ['SubSecTimeOriginal','Sub-Sec Time'],
+      ];
+      const existingLabels = new Set(currentExifRows.map(r => r[0]));
+      const extraRows = [];
+      for (const [key, label] of extraExifFields) {
+        if (data[key] != null && !existingLabels.has(label)) {
+          extraRows.push([label, String(data[key])]);
+        }
+      }
+      if (extraRows.length) {
+        const exifSection = document.getElementById('exifSection');
+        const rowsEl = document.getElementById('exifRows');
+        exifSection.classList.remove('hidden');
+        for (const [label, val] of extraRows) {
+          const row = document.createElement('div');
+          row.className = 'flex justify-between py-1.5 text-sm';
+          const lSpan = document.createElement('span');
+          lSpan.className = 'text-gray-400 dark:text-gray-500 font-medium shrink-0 pr-4';
+          lSpan.textContent = label;
+          const vSpan = document.createElement('span');
+          vSpan.className = 'text-gray-800 dark:text-gray-200 text-right break-all';
+          vSpan.textContent = val;
+          row.appendChild(lSpan);
+          row.appendChild(vSpan);
+          rowsEl.appendChild(row);
+        }
+        currentExifRows = [...currentExifRows, ...extraRows];
+      }
+
+      // IPTC section
+      const iptcRows = [];
+      const caption = g('Caption', 'caption', 'CaptionAbstract');
+      if (caption) iptcRows.push(['Caption', String(caption)]);
+      const kw = g('keywords', 'Keywords');
+      if (kw) iptcRows.push(['Keywords', Array.isArray(kw) ? kw.join(', ') : String(kw)]);
+      const headline = g('headline', 'Headline');
+      if (headline) iptcRows.push(['Headline', String(headline)]);
+      const dc = g('datecreated', 'DateCreated');
+      if (dc) iptcRows.push(['Date Created', dc instanceof Date ? dc.toLocaleDateString() : String(dc)]);
+      const tc = g('timecreated', 'TimeCreated');
+      if (tc) iptcRows.push(['Time Created', String(tc)]);
+      const creator = g('byline', 'Byline', 'Creator', 'creator');
+      if (creator) iptcRows.push(['Creator', String(creator)]);
+      const creatorTitle = g('bylinetitle', 'BylineTitle');
+      if (creatorTitle) iptcRows.push(['Creator Title', String(creatorTitle)]);
+      const credit = g('credit', 'Credit');
+      if (credit) iptcRows.push(['Credit', String(credit)]);
+      const src = g('source', 'Source');
+      if (src) iptcRows.push(['Source', String(src)]);
+      const copyright = g('copyrightnotice', 'CopyrightNotice');
+      if (copyright) iptcRows.push(['Copyright', String(copyright)]);
+      const city = g('city', 'City');
+      if (city) iptcRows.push(['City', String(city)]);
+      const country = g('country', 'Country', 'CountryPrimaryLocationName');
+      if (country) iptcRows.push(['Country', String(country)]);
+      renderMetaSection('iptcSection', 'iptcContent', 'iptcRows', iptcRows);
+
+      // ICC Profile section
+      const iccRows = [];
+      const profileDesc = g('ProfileDescription', 'profiledescription');
+      if (profileDesc) iccRows.push(['Color Profile', String(profileDesc)]);
+      const colorSpaceData = g('ColorSpaceData', 'colorspacedata');
+      if (colorSpaceData) iccRows.push(['Color Space', String(colorSpaceData).trim()]);
+      const profileClass = g('ProfileClass', 'profileclass');
+      if (profileClass) iccRows.push(['Profile Class', String(profileClass)]);
+      const manufacturer = g('DeviceManufacturer', 'ProfileCreator', 'profilecreator');
+      if (manufacturer) iccRows.push(['Manufacturer', String(manufacturer)]);
+      const profileCopyright = g('ProfileCopyright', 'profilecopyright');
+      if (profileCopyright) iccRows.push(['Profile Copyright', String(profileCopyright)]);
+      renderMetaSection('iccSection', 'iccContent', 'iccRows', iccRows);
+    }
+
+    function renderMetaSection(sectionId, contentId, rowsId, rows) {
+      const section = document.getElementById(sectionId);
+      if (!rows.length) { section.classList.add('hidden'); return; }
+      section.classList.remove('hidden');
+      const rowsEl = document.getElementById(rowsId);
+      rowsEl.innerHTML = '';
+      for (const [label, val] of rows) {
+        const row = document.createElement('div');
+        row.className = 'flex justify-between py-1.5 text-sm';
+        const lSpan = document.createElement('span');
+        lSpan.className = 'text-gray-400 dark:text-gray-500 font-medium shrink-0 pr-4';
+        lSpan.textContent = label;
+        const vSpan = document.createElement('span');
+        vSpan.className = 'text-gray-800 dark:text-gray-200 text-right break-all';
+        vSpan.textContent = val;
+        row.appendChild(lSpan);
+        row.appendChild(vSpan);
+        rowsEl.appendChild(row);
+      }
+      // Start collapsed
+      document.getElementById(contentId).classList.add('hidden');
+    }
 
     // ── Export summary ────────────────────────────────────────────────────────
     document.getElementById('exportBtn').addEventListener('click', () => {
