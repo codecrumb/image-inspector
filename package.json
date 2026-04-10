@@ -1,5 +1,9 @@
 {
+  "scripts": {
+    "build": "echo '@import \"tailwindcss\";\\n@variant dark (&:where(.dark, .dark *));' | npx @tailwindcss/cli -i - -o tailwind.css --minify"
+  },
   "devDependencies": {
+    "@tailwindcss/cli": "^4.2.2",
     "tailwindcss": "^4.2.2"
   }
 }
