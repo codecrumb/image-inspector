@@ -124,7 +124,7 @@
       <div class="mt-2 flex items-center justify-center gap-2 flex-wrap">
         <label class="inline-block cursor-pointer">
           <span class="px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">Browse file</span>
-          <input id="fileInput" type="file" accept="image/*,video/*" class="hidden" />
+          <input id="fileInput" type="file" accept="image/*,video/*" class="hidden" multiple />
         </label>
         <button id="pasteBtn" class="sm:hidden px-4 py-1.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors flex items-center gap-1.5">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -136,8 +136,31 @@
       <p id="pasteHint" class="mt-2 text-xs text-gray-400 dark:text-gray-500 hidden sm:block"></p>
     </div>
 
+    <!-- Queue navigation -->
+    <div id="queueNav" class="hidden mt-6 flex items-center justify-between gap-3 bg-white dark:bg-gray-800 rounded-2xl px-4 py-2.5 shadow-sm border border-gray-200 dark:border-gray-700">
+      <button id="queuePrev" class="p-1.5 rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors" aria-label="Previous" title="Previous (←)">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+      </button>
+      <div class="flex flex-col items-center gap-0.5 min-w-0">
+        <span id="queueCounter" class="text-sm font-medium text-gray-500 dark:text-gray-400 tabular-nums"></span>
+        <span id="queueFileName" class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-[200px]"></span>
+      </div>
+      <button id="queueNext" class="p-1.5 rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors" aria-label="Next" title="Next (→)">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+
     <!-- Results -->
-    <div id="results" class="hidden mt-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+    <div id="results" class="hidden relative mt-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+
+      <!-- Analyzing overlay (batch queue) -->
+      <div id="queueLoading" class="hidden absolute inset-0 z-10 bg-white/90 dark:bg-gray-800/90 flex flex-col items-center justify-center gap-3">
+        <svg class="animate-spin w-8 h-8 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+        <p id="queueLoadingName" class="text-sm text-gray-400 dark:text-gray-500 max-w-xs truncate text-center px-4"></p>
+      </div>
+
 
       <!-- Preview -->
       <div class="flex items-center justify-center bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-700 p-4">
@@ -1031,17 +1054,67 @@
     let currentBuffer    = null;
     let currentMime      = '';
     let currentSourceUrl = null;
+    let imageQueue  = [];  // [{ file, sourceUrl, status:'analyzing'|'done'|'error', result:{type,args}|null }]
+    let queueIndex  = -1;  // currently displayed slot index
 
     // ── File routing ──────────────────────────────────────────────────────────
-    function analyzeFile(file, sourceUrl = null) {
+    function analyzeFile(file, sourceUrl = null, onDone = null) {
       if (!file) return;
       currentSourceUrl = sourceUrl;
-      if (file.type.startsWith('image/')) analyzeImage(file);
-      else if (file.type.startsWith('video/')) analyzeVideo(file);
+      if (file.type.startsWith('image/')) analyzeImage(file, onDone);
+      else if (file.type.startsWith('video/')) analyzeVideo(file, onDone);
     }
 
+    // ── Batch queue ───────────────────────────────────────────────────────────
+    function queueFiles(files, sourceUrl = null) {
+      const firstNewIdx = imageQueue.length;
+      Array.from(files).forEach((file) => {
+        const slot = { file, sourceUrl, status: 'analyzing', result: null };
+        const idx  = imageQueue.length;
+        imageQueue.push(slot);
+        analyzeFile(file, sourceUrl, (args) => {
+          slot.status = 'done';
+          slot.result = { type: file.type.startsWith('image/') ? 'image' : 'video', args };
+          if (queueIndex === idx) navigateTo(idx);
+          updateQueueNav();
+        });
+      });
+      if (imageQueue.length > 0) navigateTo(firstNewIdx);
+      updateQueueNav();
+    }
+
+    function navigateTo(index) {
+      if (index < 0 || index >= imageQueue.length) return;
+      queueIndex = index;
+      const slot    = imageQueue[index];
+      const loading = document.getElementById('queueLoading');
+      if (slot.status === 'analyzing') {
+        document.getElementById('results').classList.remove('hidden');
+        document.getElementById('queueLoadingName').textContent = slot.file.name;
+        loading.classList.remove('hidden');
+      } else if (slot.status === 'done') {
+        loading.classList.add('hidden');
+        const { type, args } = slot.result;
+        if (type === 'image') showImageResults(...args);
+        else                  showVideoResults(...args);
+      }
+      updateQueueNav();
+    }
+
+    function updateQueueNav() {
+      const nav = document.getElementById('queueNav');
+      if (!nav) return;
+      if (imageQueue.length < 2) { nav.classList.add('hidden'); return; }
+      nav.classList.remove('hidden');
+      document.getElementById('queueCounter').textContent  = `${queueIndex + 1} / ${imageQueue.length}`;
+      document.getElementById('queueFileName').textContent = imageQueue[queueIndex]?.file.name ?? '';
+      document.getElementById('queuePrev').disabled = queueIndex <= 0;
+      document.getElementById('queueNext').disabled = queueIndex >= imageQueue.length - 1;
+    }
+
+
     // ── Image analysis ────────────────────────────────────────────────────────
-    function analyzeImage(file) {
+    function analyzeImage(file, onDone = null) {
       const reader = new FileReader();
       reader.onload = (e) => {
         const buffer = e.target.result;
@@ -1088,7 +1161,8 @@
           }
 
           const visualData = extractVisualData(colorCanvas);
-          showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo);
+          const _args = [file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo];
+          if (onDone) onDone(_args); else showImageResults(..._args);
         };
         img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
         img.src = url;
@@ -1205,7 +1279,7 @@
     }
 
     // ── Video analysis ────────────────────────────────────────────────────────
-    function analyzeVideo(file) {
+    function analyzeVideo(file, onDone = null) {
       const url = URL.createObjectURL(file);
       const video = document.createElement('video');
       video.preload = 'metadata';
@@ -1227,13 +1301,19 @@
           const reader = new FileReader();
           reader.onload = (e) => {
             const fps = parseMP4FrameRate(e.target.result);
-            showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, fps, visualData);
+            const _args = [file, canvas, video.videoWidth, video.videoHeight, video.duration, fps, visualData];
+            if (onDone) onDone(_args); else showVideoResults(..._args);
             URL.revokeObjectURL(url);
           };
-          reader.onerror = () => { showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, visualData); URL.revokeObjectURL(url); };
+          reader.onerror = () => {
+            const _args = [file, canvas, video.videoWidth, video.videoHeight, video.duration, null, visualData];
+            if (onDone) onDone(_args); else showVideoResults(..._args);
+            URL.revokeObjectURL(url);
+          };
           reader.readAsArrayBuffer(file.slice(0, 5 * 1024 * 1024));
         } else {
-          showVideoResults(file, canvas, video.videoWidth, video.videoHeight, video.duration, null, visualData);
+          const _args = [file, canvas, video.videoWidth, video.videoHeight, video.duration, null, visualData];
+          if (onDone) onDone(_args); else showVideoResults(..._args);
           URL.revokeObjectURL(url);
         }
       };
@@ -1853,6 +1933,18 @@
             document.getElementById('fileInput').click();
           }
           break;
+        case 'arrowleft':
+          if (imageQueue.length >= 2 && !lightboxOpen && !histOpen) {
+            e.preventDefault();
+            if (queueIndex > 0) navigateTo(queueIndex - 1);
+          }
+          break;
+        case 'arrowright':
+          if (imageQueue.length >= 2 && !lightboxOpen && !histOpen) {
+            e.preventDefault();
+            if (queueIndex < imageQueue.length - 1) navigateTo(queueIndex + 1);
+          }
+          break;
       }
     });
 
@@ -1862,11 +1954,17 @@
     document.getElementById('videoThumb').addEventListener('click', function () {
       openLightbox(this);
     });
+    document.getElementById('queuePrev').addEventListener('click', () => {
+      if (queueIndex > 0) navigateTo(queueIndex - 1);
+    });
+    document.getElementById('queueNext').addEventListener('click', () => {
+      if (queueIndex < imageQueue.length - 1) navigateTo(queueIndex + 1);
+    });
 
     // ── Input handlers ────────────────────────────────────────────────────────
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
-    fileInput.addEventListener('change', () => { if (fileInput.files[0]) analyzeFile(fileInput.files[0]); });
+    fileInput.addEventListener('change', () => { if (fileInput.files.length) queueFiles(fileInput.files); });
     dropzone.addEventListener('click', (e) => { if (e.target === fileInput || e.target.closest('label') || e.target.closest('#pasteBtn')) return; fileInput.click(); });
 
     // ── Full-page drag-and-drop ───────────────────────────────────────────────
@@ -1893,8 +1991,8 @@
       dragDepth = 0;
       pageDropOverlay.classList.add('hidden');
       dropzone.classList.remove('drop-active');
-      const f = e.dataTransfer.files[0];
-      if (f) analyzeFile(f);
+      const files = e.dataTransfer.files;
+      if (files.length) queueFiles(files);
     });
     // ── Google Lens ───────────────────────────────────────────────────────────
     async function openGoogleLens() {
@@ -1942,7 +2040,7 @@
       // Prefer a pasted file
       for (const item of items) {
         if (item.kind === 'file' && (item.type.startsWith('image/') || item.type.startsWith('video/'))) {
-          analyzeFile(item.getAsFile()); return;
+          queueFiles([item.getAsFile()]); return;
         }
       }
 
@@ -1955,7 +2053,7 @@
 
             const imgurExt = (mime) => ({ 'video/mp4': 'mp4', 'video/webm': 'webm', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' }[mime] || 'jpeg');
             const imgurHeaders = { 'Authorization': 'Client-ID d297fd441566f99' };
-            const fetchImgur = (id, mime) => { const ext = imgurExt(mime); return fetch(`https://i.imgur.com/${id}.${ext}`).then(r => r.blob()).then(blob => analyzeFile(new File([blob], `${id}.${ext}`, { type: mime || 'image/jpeg' }))); };
+            const fetchImgur = (id, mime) => { const ext = imgurExt(mime); return fetch(`https://i.imgur.com/${id}.${ext}`).then(r => r.blob()).then(blob => queueFiles([new File([blob], `${id}.${ext}`, { type: mime || 'image/jpeg' })])); };
 
             // Imgur album URL (imgur.com/a/xxxxx or imgur.com/a/title-slug-xxxxx) → fetch first image via API
             const imgurAlbum = url.match(/^https?:\/\/imgur\.com\/(?:a|gallery)\/([\w-]+)/);
@@ -1992,7 +2090,7 @@
                     const ext = url.split('?')[0].split('.').pop().toLowerCase();
                     const mime = ct.split(';')[0].trim();
                     const name = url.split('/').pop().split('?')[0] || `pasted.${ext}`;
-                    analyzeFile(new File([blob], name, { type: mime }), url);
+                    queueFiles([new File([blob], name, { type: mime })], url);
                   });
                 });
             };
@@ -2024,7 +2122,7 @@
         if (mediaType) {
           const blob = await item.getType(mediaType);
           const ext = mediaType.split('/')[1] || 'png';
-          analyzeFile(new File([blob], `pasted.${ext}`, { type: mediaType }));
+          queueFiles([new File([blob], `pasted.${ext}`, { type: mediaType })]);
           return;
         }
       }
@@ -2061,7 +2159,7 @@
             const ext = url.split('?')[0].split('.').pop().toLowerCase();
             const mime = ct.split(';')[0].trim();
             const name = url.split('/').pop().split('?')[0] || `image.${ext}`;
-            analyzeFile(new File([blob], name, { type: mime }), url);
+            queueFiles([new File([blob], name, { type: mime })], url);
           });
         });
       fetchAndAnalyze(url)
