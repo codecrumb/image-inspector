@@ -787,6 +787,48 @@
       return null;
     }
 
+    // ── PSD / PSB header parser ───────────────────────────────────────────────
+    function parsePSDHeader(buffer) {
+      if (buffer.byteLength < 26) return null;
+      const view = new DataView(buffer);
+      const sig = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+      if (sig !== '8BPS') return null;
+      const version  = view.getUint16(4, false); // 1=PSD, 2=PSB
+      const channels = view.getUint16(12, false);
+      const height   = view.getUint32(14, false);
+      const width    = view.getUint32(18, false);
+      const depth    = view.getUint16(22, false);
+      const colorMode = view.getUint16(24, false);
+      const modeLabels = { 0:'Bitmap', 1:'Grayscale', 2:'Indexed Color', 3:'RGB', 4:'CMYK',
+                           7:'Multichannel', 8:'Duotone', 9:'Lab Color' };
+      const modeLabel = modeLabels[colorMode] ?? `Mode ${colorMode}`;
+      const bitsPerPx = depth * channels;
+      return {
+        version, width, height, channels, depth, colorMode, modeLabel,
+        bitDepthInfo: { label: `${depth}-bit`, note: `${depth} bits/channel · ${modeLabel} · ${channels} ch (${bitsPerPx} bits/px)` },
+        dpiInfo: null,
+      };
+    }
+
+    function analyzePSD(file, onDone = null) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const buffer = e.target.result;
+        const psd = parsePSDHeader(buffer);
+        if (!psd) {
+          if (onDone) onDone(null); else alert('Could not read PSD header.');
+          return;
+        }
+        const emptyVisualData = { palette: [], avgColor: null, histR: new Array(256).fill(0),
+                                  histG: new Array(256).fill(0), histB: new Array(256).fill(0),
+                                  histL: new Array(256).fill(0) };
+        const _args = [file, null, psd.width, psd.height, psd.dpiInfo, [], emptyVisualData,
+                       buffer, null, psd.bitDepthInfo, null];
+        if (onDone) onDone(_args); else showImageResults(..._args);
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
     // ── JPEG Quality estimator ────────────────────────────────────────────────
     function parseJPEGQuality(buffer) {
       const view = new DataView(buffer);
@@ -1239,7 +1281,10 @@
     function analyzeFile(file, sourceUrl = null, onDone = null) {
       if (!file) return;
       currentSourceUrl = sourceUrl;
-      if (file.type.startsWith('image/')) analyzeImage(file, onDone);
+      const psdMimes = ['image/vnd.adobe.photoshop', 'image/x-photoshop', 'image/photoshop', 'application/x-photoshop', 'application/photoshop'];
+      const looksLikePSD = psdMimes.includes(file.type.toLowerCase()) || /\.ps[db]$/i.test(file.name);
+      if (looksLikePSD) analyzePSD(file, onDone);
+      else if (file.type.startsWith('image/')) analyzeImage(file, onDone);
       else if (file.type.startsWith('video/')) analyzeVideo(file, onDone);
     }
 
@@ -1258,7 +1303,7 @@
 
         analyzeFile(file, sourceUrl, (args) => {
           slot.status = 'done';
-          slot.result = { type: file.type.startsWith('image/') ? 'image' : 'video', args };
+          slot.result = { type: file.type.startsWith('video/') ? 'video' : 'image', args };
           if (queueIndex === idx) navigateTo(idx);
           updateQueueNav();
         });
@@ -1378,12 +1423,20 @@
       const preview = document.getElementById('preview');
       if (preview._prevURL) URL.revokeObjectURL(preview._prevURL);
       preview._prevURL = url;
-      preview.src = url;
-      preview.classList.remove('hidden');
       document.getElementById('videoThumb').classList.add('hidden');
+      if (url) {
+        preview.src = url;
+        preview.classList.remove('hidden');
+      } else {
+        preview.src = '';
+        preview.classList.add('hidden');
+      }
 
+      const isPsd = mime === 'image/vnd.adobe.photoshop' || mime === 'image/x-photoshop'
+                 || mime === 'image/photoshop' || mime === 'application/x-photoshop'
+                 || mime === 'application/photoshop' || /\.ps[db]$/i.test(file.name);
       const isJpeg = mime === 'image/jpeg' || mime === 'image/jpg';
-      const hasBitDepth = mime === 'image/jpeg' || mime === 'image/jpg' || mime === 'image/png';
+      const hasBitDepth = isJpeg || mime === 'image/png' || isPsd;
       document.getElementById('cell-pixels').classList.remove('hidden');
       document.getElementById('cell-dpi').classList.remove('hidden');
       document.getElementById('cell-bitdepth').classList.toggle('hidden', !hasBitDepth);
@@ -1463,7 +1516,7 @@
       renderVisualAnalysis(visualData);
       renderExif(exifRows);
       document.getElementById('results').classList.remove('hidden');
-      runExifrEnrichment(file);
+      if (url) runExifrEnrichment(file);
     }
 
     // ── Video analysis ────────────────────────────────────────────────────────
