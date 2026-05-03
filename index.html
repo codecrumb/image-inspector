@@ -383,6 +383,155 @@
       pasteHint.textContent = 'or paste with ' + (isMac || isIPad ? 'Cmd+V' : 'Ctrl+V');
     }
 
+    // ── OPFS persistence helpers ────────────────────────────────────────────
+    const OPFS_DIR      = 'image-inspector-cache';
+    const SS_KEY        = 'ii_opfs_ids';       // sessionStorage: JSON array of cached IDs
+    const SS_QUEUE_KEY  = 'ii_queue_index';    // sessionStorage: last viewed queue index
+    const MAX_FILE_SIZE = 50 * 1024 * 1024;    // 50 MB per-file cap
+    const MAX_CACHED    = 20;                  // max files stored in OPFS
+    const BC_CHANNEL    = 'image-inspector-opfs';
+    const BC_TIMEOUT    = 300;                 // ms to wait for tab replies
+
+    async function opfsDir() {
+      const root = await navigator.storage.getDirectory();
+      return root.getDirectoryHandle(OPFS_DIR, { create: true });
+    }
+
+    async function saveToOPFS(id, file) {
+      if (file.size > MAX_FILE_SIZE) return false;
+      const dir = await opfsDir();
+      // metadata sidecar: store name + type so we can reconstruct the File
+      const metaHandle = await dir.getFileHandle(id + '.meta', { create: true });
+      const metaW = await metaHandle.createWritable();
+      await metaW.write(JSON.stringify({ name: file.name, type: file.type, size: file.size }));
+      await metaW.close();
+      // binary data
+      const dataHandle = await dir.getFileHandle(id + '.data', { create: true });
+      const dataW = await dataHandle.createWritable();
+      await dataW.write(await file.arrayBuffer());
+      await dataW.close();
+      return true;
+    }
+
+    async function loadFromOPFS(id) {
+      try {
+        const dir = await opfsDir();
+        const metaHandle = await dir.getFileHandle(id + '.meta');
+        const metaFile   = await metaHandle.getFile();
+        const meta       = JSON.parse(await metaFile.text());
+        const dataHandle = await dir.getFileHandle(id + '.data');
+        const dataFile   = await dataHandle.getFile();
+        const buf        = await dataFile.arrayBuffer();
+        return new File([buf], meta.name, { type: meta.type });
+      } catch { return null; }
+    }
+
+    async function removeFromOPFS(id) {
+      try {
+        const dir = await opfsDir();
+        await dir.removeEntry(id + '.meta');
+        await dir.removeEntry(id + '.data');
+      } catch {}
+    }
+
+    async function listOPFSIds() {
+      const ids = new Set();
+      try {
+        const dir = await opfsDir();
+        for await (const name of dir.keys()) {
+          if (name.endsWith('.meta')) ids.add(name.slice(0, -5));
+        }
+      } catch {}
+      return ids;
+    }
+
+    // Session-scoped ID tracking
+    function ssGetIds() {
+      try { return JSON.parse(sessionStorage.getItem(SS_KEY) || '[]'); } catch { return []; }
+    }
+    function ssSetIds(ids) { sessionStorage.setItem(SS_KEY, JSON.stringify(ids)); }
+    function ssAddId(id) {
+      const ids = ssGetIds();
+      if (!ids.includes(id)) { ids.push(id); ssSetIds(ids); }
+    }
+    function ssRemoveId(id) {
+      ssSetIds(ssGetIds().filter(x => x !== id));
+    }
+    function ssSaveQueueIndex(idx) { sessionStorage.setItem(SS_QUEUE_KEY, String(idx)); }
+    function ssGetQueueIndex() {
+      const v = sessionStorage.getItem(SS_QUEUE_KEY);
+      return v !== null ? parseInt(v, 10) : 0;
+    }
+
+    function generateCacheId() {
+      return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    }
+
+    // BroadcastChannel cross-tab coordination
+    const opfsBroadcast = (typeof BroadcastChannel !== 'undefined')
+      ? new BroadcastChannel(BC_CHANNEL) : null;
+
+    // Respond to pings from other tabs with our claimed IDs
+    if (opfsBroadcast) {
+      opfsBroadcast.addEventListener('message', (e) => {
+        if (e.data && e.data.type === 'ping') {
+          opfsBroadcast.postMessage({ type: 'pong', ids: ssGetIds() });
+        }
+      });
+    }
+
+    // Ask other tabs which IDs they're using
+    function collectClaimedIds() {
+      return new Promise((resolve) => {
+        if (!opfsBroadcast) { resolve(new Set()); return; }
+        const claimed = new Set();
+        const handler = (e) => {
+          if (e.data && e.data.type === 'pong' && Array.isArray(e.data.ids)) {
+            e.data.ids.forEach(id => claimed.add(id));
+          }
+        };
+        opfsBroadcast.addEventListener('message', handler);
+        opfsBroadcast.postMessage({ type: 'ping' });
+        setTimeout(() => {
+          opfsBroadcast.removeEventListener('message', handler);
+          resolve(claimed);
+        }, BC_TIMEOUT);
+      });
+    }
+
+    // Evict oldest entries beyond the cap
+    async function enforceOPFSCap() {
+      const ids = ssGetIds();
+      if (ids.length <= MAX_CACHED) return;
+      const evict = ids.slice(0, ids.length - MAX_CACHED);
+      for (const id of evict) {
+        await removeFromOPFS(id);
+        ssRemoveId(id);
+      }
+    }
+
+    // Purge OPFS entries not claimed by any open tab
+    async function cleanupOPFS() {
+      const claimed = await collectClaimedIds();
+      // Add our own IDs to claimed set
+      ssGetIds().forEach(id => claimed.add(id));
+      const stored = await listOPFSIds();
+      for (const id of stored) {
+        if (!claimed.has(id)) await removeFromOPFS(id);
+      }
+    }
+
+    // Save a file to OPFS and register in sessionStorage
+    async function cacheFile(file) {
+      if (file.size > MAX_FILE_SIZE) return null;
+      const id = generateCacheId();
+      const saved = await saveToOPFS(id, file);
+      if (!saved) return null;
+      ssAddId(id);
+      await enforceOPFSCap();
+      return id;
+    }
+
     // ── Theme toggle ──────────────────────────────────────────────────────────
     const toggle = document.getElementById('themeToggle');
     const iconSun = document.getElementById('iconSun');
@@ -1054,8 +1203,9 @@
     let currentBuffer    = null;
     let currentMime      = '';
     let currentSourceUrl = null;
-    let imageQueue  = [];  // [{ file, sourceUrl, status:'analyzing'|'done'|'error', result:{type,args}|null }]
+    let imageQueue  = [];  // [{ file, sourceUrl, cacheId, status:'analyzing'|'done'|'error', result:{type,args}|null }]
     let queueIndex  = -1;  // currently displayed slot index
+    let restoringFromOPFS = false; // flag to skip re-caching during restore
 
     // ── File routing ──────────────────────────────────────────────────────────
     function analyzeFile(file, sourceUrl = null, onDone = null) {
@@ -1066,12 +1216,18 @@
     }
 
     // ── Batch queue ───────────────────────────────────────────────────────────
-    function queueFiles(files, sourceUrl = null) {
+    function queueFiles(files, sourceUrl = null, existingCacheIds = null) {
       const firstNewIdx = imageQueue.length;
-      Array.from(files).forEach((file) => {
-        const slot = { file, sourceUrl, status: 'analyzing', result: null };
+      Array.from(files).forEach((file, i) => {
+        const slot = { file, sourceUrl, cacheId: existingCacheIds ? existingCacheIds[i] : null, status: 'analyzing', result: null };
         const idx  = imageQueue.length;
         imageQueue.push(slot);
+
+        // Cache to OPFS (fire-and-forget) unless restoring
+        if (!restoringFromOPFS && !slot.cacheId) {
+          cacheFile(file).then(id => { if (id) slot.cacheId = id; }).catch(() => {});
+        }
+
         analyzeFile(file, sourceUrl, (args) => {
           slot.status = 'done';
           slot.result = { type: file.type.startsWith('image/') ? 'image' : 'video', args };
@@ -1086,6 +1242,7 @@
     function navigateTo(index) {
       if (index < 0 || index >= imageQueue.length) return;
       queueIndex = index;
+      ssSaveQueueIndex(index);
       const slot    = imageQueue[index];
       const loading = document.getElementById('queueLoading');
       if (slot.status === 'analyzing') {
@@ -2143,6 +2300,32 @@
       }
       alert('No image or image URL found in clipboard.');
     });
+
+    // ── Restore cached images from OPFS on reload ──────────────────────────
+    (async function restoreFromOPFS() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('q')) return; // skip restore when loading from URL
+      const ids = ssGetIds();
+      if (!ids.length) { cleanupOPFS().catch(() => {}); return; }
+      const files = [];
+      const validIds = [];
+      for (const id of ids) {
+        const file = await loadFromOPFS(id);
+        if (file) { files.push(file); validIds.push(id); }
+      }
+      // Update sessionStorage to only keep valid IDs
+      ssSetIds(validIds);
+      if (files.length) {
+        restoringFromOPFS = true;
+        queueFiles(files, null, validIds);
+        // Restore last viewed position
+        const savedIdx = ssGetQueueIndex();
+        if (savedIdx >= 0 && savedIdx < imageQueue.length) navigateTo(savedIdx);
+        restoringFromOPFS = false;
+      }
+      // Clean up stale OPFS entries from closed tabs
+      cleanupOPFS().catch(() => {});
+    })();
 
     // ── Load from ?q=<url> query parameter ────────────────────────────────────
     (function () {
