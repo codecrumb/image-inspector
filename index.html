@@ -386,9 +386,9 @@
     // ── OPFS persistence helpers ────────────────────────────────────────────
     const OPFS_DIR      = 'image-inspector-cache';
     const SS_KEY        = 'ii_opfs_ids';       // sessionStorage: JSON array of cached IDs
-    const SS_QUEUE_KEY  = 'ii_queue_index';    // sessionStorage: last viewed queue index
+    const SS_QUEUE_KEY  = 'ii_queue_id';       // sessionStorage: cacheId of last viewed image
     const MAX_FILE_SIZE = 50 * 1024 * 1024;    // 50 MB per-file cap
-    const MAX_CACHED    = 20;                  // max files stored in OPFS
+    const MAX_CACHED    = 20;                  // max files stored per tab in OPFS
     const BC_CHANNEL    = 'image-inspector-opfs';
     const BC_TIMEOUT    = 300;                 // ms to wait for tab replies
 
@@ -457,11 +457,8 @@
     function ssRemoveId(id) {
       ssSetIds(ssGetIds().filter(x => x !== id));
     }
-    function ssSaveQueueIndex(idx) { sessionStorage.setItem(SS_QUEUE_KEY, String(idx)); }
-    function ssGetQueueIndex() {
-      const v = sessionStorage.getItem(SS_QUEUE_KEY);
-      return v !== null ? parseInt(v, 10) : 0;
-    }
+    function ssSaveQueueId(cacheId) { if (cacheId) sessionStorage.setItem(SS_QUEUE_KEY, cacheId); }
+    function ssGetQueueId() { return sessionStorage.getItem(SS_QUEUE_KEY) || null; }
 
     function generateCacheId() {
       return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
@@ -1205,7 +1202,6 @@
     let currentSourceUrl = null;
     let imageQueue  = [];  // [{ file, sourceUrl, cacheId, status:'analyzing'|'done'|'error', result:{type,args}|null }]
     let queueIndex  = -1;  // currently displayed slot index
-    let restoringFromOPFS = false; // flag to skip re-caching during restore
 
     // ── File routing ──────────────────────────────────────────────────────────
     function analyzeFile(file, sourceUrl = null, onDone = null) {
@@ -1223,8 +1219,8 @@
         const idx  = imageQueue.length;
         imageQueue.push(slot);
 
-        // Cache to OPFS (fire-and-forget) unless restoring
-        if (!restoringFromOPFS && !slot.cacheId) {
+        // Cache to OPFS (fire-and-forget); skip if slot already has an id (restore path)
+        if (!slot.cacheId) {
           cacheFile(file).then(id => { if (id) slot.cacheId = id; }).catch(() => {});
         }
 
@@ -1242,7 +1238,7 @@
     function navigateTo(index) {
       if (index < 0 || index >= imageQueue.length) return;
       queueIndex = index;
-      ssSaveQueueIndex(index);
+      ssSaveQueueId(imageQueue[index].cacheId);
       const slot    = imageQueue[index];
       const loading = document.getElementById('queueLoading');
       if (slot.status === 'analyzing') {
@@ -2307,21 +2303,28 @@
       if (params.get('q')) return; // skip restore when loading from URL
       const ids = ssGetIds();
       if (!ids.length) { cleanupOPFS().catch(() => {}); return; }
-      const files = [];
-      const validIds = [];
-      for (const id of ids) {
-        const file = await loadFromOPFS(id);
-        if (file) { files.push(file); validIds.push(id); }
-      }
-      // Update sessionStorage to only keep valid IDs
-      ssSetIds(validIds);
-      if (files.length) {
-        restoringFromOPFS = true;
-        queueFiles(files, null, validIds);
-        // Restore last viewed position
-        const savedIdx = ssGetQueueIndex();
-        if (savedIdx >= 0 && savedIdx < imageQueue.length) navigateTo(savedIdx);
-        restoringFromOPFS = false;
+
+      // Show spinner immediately so the drop zone never flashes in
+      document.getElementById('dropzone').classList.add('hidden');
+      document.getElementById('results').classList.remove('hidden');
+      document.getElementById('queueLoading').classList.remove('hidden');
+
+      // Load all files in parallel
+      const results = await Promise.all(ids.map(id => loadFromOPFS(id).then(file => ({ id, file }))));
+      const valid = results.filter(r => r.file);
+      ssSetIds(valid.map(r => r.id));
+
+      if (valid.length) {
+        queueFiles(valid.map(r => r.file), null, valid.map(r => r.id));
+        // Restore last viewed position by cacheId (immune to partial eviction)
+        const savedId = ssGetQueueId();
+        const savedIdx = savedId ? valid.findIndex(r => r.id === savedId) : 0;
+        navigateTo(savedIdx >= 0 ? savedIdx : 0);
+      } else {
+        // Nothing to restore — show drop zone again
+        document.getElementById('dropzone').classList.remove('hidden');
+        document.getElementById('results').classList.add('hidden');
+        document.getElementById('queueLoading').classList.add('hidden');
       }
       // Clean up stale OPFS entries from closed tabs
       cleanupOPFS().catch(() => {});
