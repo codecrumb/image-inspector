@@ -1325,8 +1325,15 @@
       } else if (slot.status === 'done') {
         loading.classList.add('hidden');
         const { type, args } = slot.result;
-        if (type === 'image') showImageResults(...args);
-        else                  showVideoResults(...args);
+        if (type === 'image') {
+          // args[1] is the blob URL, which may have been revoked when we last navigated away.
+          // Recreate it from the still-valid File object (args[0]).
+          if (args[1]) URL.revokeObjectURL(args[1]);
+          args[1] = args[0] ? URL.createObjectURL(args[0]) : null;
+          showImageResults(...args);
+        } else {
+          showVideoResults(...args);
+        }
       }
       updateQueueNav();
     }
