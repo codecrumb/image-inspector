@@ -2375,6 +2375,39 @@
       if (files.length) queueFiles(files);
     });
     // ── Google Lens ───────────────────────────────────────────────────────────
+    // Temp hosts that return a direct file URL and allow cross-origin uploads.
+    // Tried in order; add fallbacks here. (tmpfiles.org / onlyfiles.com only return
+    // a UI page URL with a signed /dl/ token in HTML we can't read cross-origin.)
+    const TEMP_UPLOADERS = [
+      async (file) => {
+        const fd = new FormData();
+        fd.append('reqtype', 'fileupload');
+        fd.append('time', '1h');
+        fd.append('fileToUpload', file);
+        const res = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', { method: 'POST', body: fd });
+        const text = (await res.text()).trim();
+        if (!res.ok || !/^https:\/\//.test(text)) throw new Error(text || 'Upload failed');
+        return text;
+      },
+      async (file) => {
+        const fd = new FormData();
+        fd.append('files', file);
+        const res = await fetch('https://tempfile.org/api/upload/local', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Upload failed');
+        // files[0].url is a UI page; appending "download" serves the raw file
+        return data.files[0].url.replace(/\/?$/, '/') + 'download';
+      },
+    ];
+
+    async function uploadTempFile(file) {
+      let lastErr;
+      for (const upload of TEMP_UPLOADERS) {
+        try { return await upload(file); } catch (e) { lastErr = e; }
+      }
+      throw lastErr || new Error('Upload failed');
+    }
+
     async function openGoogleLens() {
       const btn = document.getElementById('lensBtn');
       const originalHTML = btn.innerHTML;
@@ -2385,7 +2418,7 @@
         return;
       }
 
-      // Local file: upload to tmpfiles.org (CORS-friendly), then redirect to uploadbyurl
+      // Local file: upload to a CORS-friendly temp host, then redirect to uploadbyurl
       const preview = document.getElementById('preview');
       if (!preview._prevURL) return;
 
@@ -2395,14 +2428,8 @@
       try {
         const blob = await fetch(preview._prevURL).then(r => r.blob());
         const ext = blob.type.split('/')[1] || 'png';
-        const formData = new FormData();
-        formData.append('file', new File([blob], `image.${ext}`, { type: blob.type }));
-
-        const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: formData });
-        if (!res.ok) throw new Error('Upload failed');
-        const { data } = await res.json();
-        // API returns page URL (tmpfiles.org/123/file), convert to direct download URL
-        const url = data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+        const file =new File([blob], `image.${ext}`, { type: blob.type });
+        const url = await uploadTempFile(file);
         window.open('https://lens.google.com/uploadbyurl?url=' + encodeURIComponent(url), '_blank');
       } catch (err) {
         alert('Could not upload image: ' + err.message);
