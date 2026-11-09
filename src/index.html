@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Inspector</title>
+  <meta name="description" content="Inspect images instantly in your browser — view EXIF metadata, color palettes, histograms, bit depth, DPI, steganography detection, and more. No uploads, 100% client-side." />
+  <!-- Theme init: runs before render to prevent flash -->
+  <script>
+    (function () {
+      let stored = null;
+      try { stored = localStorage.getItem('theme'); } catch (e) {}
+      if (stored) {
+        if (stored === 'dark') document.documentElement.classList.add('dark');
+      } else {
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        try { localStorage.setItem('theme', prefersDark ? 'dark' : 'light'); } catch (e) {}
+        if (prefersDark) document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
+  <!-- Instant background before Tailwind CDN loads — prevents flash -->
+  <style>
+    html { background-color: #f3f4f6; }
+    html.dark { background-color: #111827; }
+  </style>
+{{HEAD_LINKS}}
+{{CSS}}
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 min-h-screen flex flex-col items-center justify-center p-6 font-sans transition-colors duration-150">
+
+  <main class="w-full max-w-2xl">
+    <div class="flex items-center justify-center relative mb-1">
+      <h1 class="text-3xl font-bold text-gray-800 dark:text-gray-100 text-center">Image Inspector</h1>
+      <button
+        id="themeToggle"
+        class="absolute right-0 p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+        aria-label="Toggle dark mode"
+        title="Toggle theme (T)"
+      >
+        <svg id="iconSun" class="hidden w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364-.707.707M6.343 17.657l-.707.707M17.657 17.657l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
+        </svg>
+        <svg id="iconMoon" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z" />
+        </svg>
+      </button>
+    </div>
+    <p class="text-gray-500 dark:text-gray-400 text-center mb-6 text-sm">Upload an image or video to inspect its metadata — no data leaves your browser.</p>
+
+    <!-- Drop Zone -->
+    <div
+      id="dropzone"
+      class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-2xl bg-white dark:bg-gray-800 p-10 text-center cursor-pointer transition-colors duration-150 hover:border-indigo-400 hover:bg-indigo-50 dark:hover:border-indigo-500 dark:hover:bg-indigo-950"
+    >
+      <svg class="mx-auto mb-3 w-12 h-12 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+      </svg>
+      <p class="text-gray-500 dark:text-gray-400 text-sm">Drag &amp; drop an image or video here, or</p>
+      <div class="mt-2 flex items-center justify-center gap-2 flex-wrap">
+        <label class="inline-block cursor-pointer">
+          <span class="px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">Browse file</span>
+          <input id="fileInput" type="file" accept="image/*,video/*" class="hidden" multiple />
+        </label>
+        <button id="pasteBtn" class="sm:hidden px-4 py-1.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors flex items-center gap-1.5">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+          </svg>
+          Paste
+        </button>
+      </div>
+      <p id="pasteHint" class="mt-2 text-xs text-gray-400 dark:text-gray-500 hidden sm:block"></p>
+    </div>
+
+    <!-- Queue navigation -->
+    <div id="queueNav" class="hidden mt-6 flex items-center justify-between gap-3 bg-white dark:bg-gray-800 rounded-2xl px-4 py-2.5 shadow-sm border border-gray-200 dark:border-gray-700">
+      <button id="queuePrev" class="p-1.5 rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors" aria-label="Previous" title="Previous (←)">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+      </button>
+      <div class="flex flex-col items-center gap-0.5 min-w-0">
+        <span id="queueCounter" class="text-sm font-medium text-gray-500 dark:text-gray-400 tabular-nums"></span>
+        <span id="queueFileName" class="text-xs text-gray-400 dark:text-gray-500 truncate max-w-[200px]"></span>
+      </div>
+      <button id="queueNext" class="p-1.5 rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors" aria-label="Next" title="Next (→)">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="hidden relative mt-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+
+      <!-- Analyzing overlay (batch queue) -->
+      <div id="queueLoading" class="hidden absolute inset-0 z-10 bg-white/90 dark:bg-gray-800/90 flex flex-col items-center justify-center gap-3">
+        <svg class="animate-spin w-8 h-8 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+        <p id="queueLoadingName" class="text-sm text-gray-400 dark:text-gray-500 max-w-xs truncate text-center px-4"></p>
+      </div>
+
+
+      <!-- Preview -->
+      <div class="flex items-center justify-center bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-700 p-4">
+        <img id="preview" class="max-h-48 max-w-full rounded object-contain shadow cursor-zoom-in" alt="Preview" title="Open lightbox (Enter)" />
+        <canvas id="videoThumb" class="hidden max-h-48 max-w-full rounded object-contain shadow cursor-zoom-in"></canvas>
+      </div>
+
+      <!-- Stats Grid -->
+      <div id="statsGrid" class="grid grid-cols-2 gap-px bg-gray-200 dark:bg-gray-700">
+        <!-- Always shown -->
+        <div data-copyid="stat-format" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Format</p>
+          <p id="stat-format" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+        </div>
+        <div data-copyid="stat-size" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">File Size</p>
+          <p id="stat-size" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-size-sub" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+        <div data-copyid="stat-resolution" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Resolution</p>
+          <p id="stat-resolution" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+        </div>
+        <div data-copyid="stat-aspect" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Aspect Ratio</p>
+          <p id="stat-aspect" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+        </div>
+
+        <!-- Image-only -->
+        <div id="cell-pixels" data-copyid="stat-pixels" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Megapixels</p>
+          <p id="stat-pixels" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-pixels-sub" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+        <div id="cell-dpi" data-copyid="stat-dpi" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">DPI (from metadata)</p>
+          <p id="stat-dpi" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-dpi-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+
+        <!-- Image-only (PNG + JPEG) -->
+        <div id="cell-bitdepth" data-copyid="stat-bitdepth" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Bit Depth</p>
+          <p id="stat-bitdepth" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-bitdepth-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+
+        <!-- JPEG-only -->
+        <div id="cell-quality" data-copyid="stat-quality" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">JPEG Quality</p>
+          <p id="stat-quality" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-quality-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+
+        <!-- EXIF orientation (JPEG only, when present) -->
+        <div id="cell-orientation" data-copyid="stat-orientation" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Orientation</p>
+          <p id="stat-orientation" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-orientation-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+
+        <!-- Video-only (hidden by default) -->
+        <div id="cell-duration" data-copyid="stat-duration" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Duration</p>
+          <p id="stat-duration" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+        </div>
+        <div id="cell-bitrate" data-copyid="stat-bitrate" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Bitrate (est.)</p>
+          <p id="stat-bitrate" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+        </div>
+        <div id="cell-fps" data-copyid="stat-fps" class="hidden relative bg-white dark:bg-gray-800 p-4 col-span-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Frame Rate</p>
+          <p id="stat-fps" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
+          <p id="stat-fps-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
+        </div>
+      </div>
+
+      <!-- Steganography hint -->
+      <div id="stegoWarning" class="hidden border-t border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3">
+        <div class="flex items-start gap-2">
+          <span class="text-amber-500 dark:text-amber-400 text-base leading-5 shrink-0">⚠</span>
+          <div>
+            <p class="text-sm font-semibold text-amber-700 dark:text-amber-400">Unusually large file for these dimensions</p>
+            <p id="stegoDetail" class="text-xs text-amber-600 dark:text-amber-500 mt-0.5"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Appended data scanner -->
+      <div id="stegoScanSection" class="hidden border-t border-gray-200 dark:border-gray-700 px-4 py-3">
+        <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-2">Appended Data</p>
+        <div id="scanResult" class="text-xs"></div>
+      </div>
+
+      <!-- Visual Analysis -->
+      <div id="paletteSection" class="hidden border-t border-gray-200 dark:border-gray-700 p-4">
+        <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-3">Visual Analysis</p>
+
+        <!-- Average color + dominant palette -->
+        <div class="flex items-start gap-3 flex-wrap mb-4">
+          <div id="avgColorWrap" class="hidden flex-col items-center gap-1">
+            <div id="avgColorSwatch" class="w-10 h-10 rounded-lg shadow-sm border border-black/10 dark:border-white/10 cursor-pointer"></div>
+            <span id="avgColorHex" class="text-xs font-mono text-gray-500 dark:text-gray-400"></span>
+            <span class="text-xs text-gray-400 dark:text-gray-500">avg</span>
+          </div>
+          <div id="paletteSwatches" class="flex gap-3 flex-wrap"></div>
+        </div>
+
+        <!-- Histogram -->
+        <div id="histogramWrap" class="hidden">
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-1.5">Histogram</p>
+          <canvas id="histogramCanvas" class="w-full rounded cursor-pointer" height="60" title="Expand histogram (H)"></canvas>
+        </div>
+
+        <!-- Image metrics: brightness, contrast, sharpness, noise -->
+        <div id="imageMetricsWrap" class="hidden mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5">
+          <div>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">Brightness</p>
+            <div class="flex items-center gap-2">
+              <div class="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                <div id="metricBrightnessBar" class="h-full rounded-full bg-yellow-400 dark:bg-yellow-500 transition-all" style="width:0%"></div>
+              </div>
+              <span id="metricBrightnessLabel" class="text-xs text-gray-500 dark:text-gray-400 w-20 text-right shrink-0"></span>
+            </div>
+          </div>
+          <div>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">Contrast</p>
+            <div class="flex items-center gap-2">
+              <div class="flex-1 h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                <div id="metricContrastBar" class="h-full rounded-full bg-blue-400 dark:bg-blue-500 transition-all" style="width:0%"></div>
+              </div>
+              <span id="metricContrastLabel" class="text-xs text-gray-500 dark:text-gray-400 w-20 text-right shrink-0"></span>
+            </div>
+          </div>
+          <div>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">Sharpness</p>
+            <span id="metricSharpnessBadge" class="text-xs font-medium px-2 py-0.5 rounded-full"></span>
+          </div>
+          <div>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">Noise</p>
+            <span id="metricNoiseBadge" class="text-xs font-medium px-2 py-0.5 rounded-full"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- EXIF Data (collapsible, images only) -->
+      <div id="exifSection" class="hidden border-t border-gray-200 dark:border-gray-700">
+        <button id="exifToggle" class="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors" title="Toggle EXIF (E)">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">EXIF Data</p>
+          <svg id="exifChevron" class="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        <div id="exifContent" class="hidden px-4 pb-4">
+          <div id="exifRows" class="divide-y divide-gray-100 dark:divide-gray-700"></div>
+        </div>
+      </div>
+
+      <!-- IPTC Data (collapsible, populated async by exifr) -->
+      <div id="iptcSection" class="hidden border-t border-gray-200 dark:border-gray-700">
+        <button id="iptcToggle" class="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">IPTC / Caption</p>
+          <svg id="iptcChevron" class="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        <div id="iptcContent" class="hidden px-4 pb-4">
+          <div id="iptcRows" class="divide-y divide-gray-100 dark:divide-gray-700"></div>
+        </div>
+      </div>
+
+      <!-- ICC / Color Profile (collapsible, populated async by exifr) -->
+      <div id="iccSection" class="hidden border-t border-gray-200 dark:border-gray-700">
+        <button id="iccToggle" class="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+          <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">Color Profile</p>
+          <svg id="iccChevron" class="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        <div id="iccContent" class="hidden px-4 pb-4">
+          <div id="iccRows" class="divide-y divide-gray-100 dark:divide-gray-700"></div>
+        </div>
+      </div>
+
+      <!-- Export -->
+      <div class="border-t border-gray-200 dark:border-gray-700 p-4">
+        <button id="exportBtn" class="relative w-full py-2 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors" title="Copy summary (C)">
+          Copy Summary
+        </button>
+        <button id="blurBtn" class="hidden w-full mt-2 py-2 rounded-lg text-sm font-medium text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center justify-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/></svg>
+          Blur &amp; Download
+        </button>
+        <button id="lensBtn" class="hidden relative w-full mt-2 py-2 rounded-lg text-sm font-medium text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center justify-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><circle cx="11" cy="11" r="3"/></svg>
+          Search with Google Lens
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Full-page drop overlay -->
+  <div id="pageDropOverlay" class="hidden fixed inset-0 z-40 bg-indigo-950/90 flex flex-col items-center justify-center pointer-events-none" style="border: 4px dashed rgba(167, 139, 250, 0.7)">
+    <svg class="w-16 h-16 text-indigo-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+    </svg>
+    <p class="text-white text-2xl font-bold mt-4">Drop anywhere</p>
+    <p class="text-indigo-300 text-sm mt-2">Release to analyze your file</p>
+  </div>
+
+
+  <!-- Histogram modal -->
+  <div id="histModal" class="hidden fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
+    <div class="bg-white dark:bg-gray-900 rounded-xl shadow-2xl p-5 w-full max-w-2xl">
+      <div class="flex items-center justify-between mb-3">
+        <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold">Histogram</p>
+        <div class="flex items-center gap-4 text-xs font-mono text-gray-400 dark:text-gray-500">
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(239,68,68,0.7)"></span>R</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(34,197,94,0.7)"></span>G</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:rgba(59,130,246,0.7)"></span>B</span>
+          <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-0.5 rounded" style="background:rgba(120,120,120,0.7)"></span>Lum</span>
+          <button id="histCopyBtn" class="ml-2 flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            <span id="histCopyLabel">Copy</span>
+          </button>
+        </div>
+      </div>
+      <canvas id="histModalCanvas" class="w-full rounded"></canvas>
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="hidden fixed inset-0 z-50 bg-black/90 flex items-center justify-center">
+    <canvas id="lightboxCanvas" class="max-w-full max-h-full cursor-crosshair"></canvas>
+    <div id="loupe" class="hidden pointer-events-none fixed" style="width:120px;height:120px">
+      <canvas id="loupeCanvas" width="120" height="120" style="border-radius:50%;border:2px solid white;box-shadow:0 2px 12px rgba(0,0,0,0.5)"></canvas>
+      <div id="loupeHex" style="text-align:center;margin-top:4px;font-size:11px;font-weight:600;color:white;font-family:monospace;text-shadow:0 1px 3px rgba(0,0,0,0.8)"></div>
+    </div>
+  </main>
+
+{{FOOTER}}
+
+{{JS}}
+</body>
+</html>
