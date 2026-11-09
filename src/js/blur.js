@@ -1,10 +1,20 @@
 import { state } from './state.js';
+import { blurCanvas } from './blur-engine.js';
 
 // ── Blur & Download (built lazily on first use) ───────────────────────────
+// The preview runs on a downscaled copy; strokes are stored in normalized coordinates and replayed
+// at export size, so the saved file is blurred at full resolution without keeping big canvases alive.
+const isTouch = matchMedia('(pointer: coarse)').matches;
+const PREVIEW_MAX = 1600;
+const EXPORT_MAX = isTouch ? 3072 : 4096; // phones run out of canvas memory above this
+const SIGMA_AT_FULL_STRENGTH = 0.03;      // fraction of the long side
+
+const mk = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
+const release = (...cs) => cs.forEach(c => { if (c) c.width = c.height = 0; });
+
 function openBlurTool() {
   const src = document.getElementById('preview')._prevURL;
   if (!src || document.getElementById('blurModal')) return;
-  const MAX = 4096;
   const origName = (state.imageQueue[state.queueIndex]?.file.name || 'image').replace(/\.[^.]+$/, '');
   const outType = /^image\/(jpeg|png|webp)$/.test(state.currentMime) ? state.currentMime : 'image/png';
   const outExt = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[outType];
@@ -18,10 +28,10 @@ function openBlurTool() {
         <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">Blur &amp; Download</span>
         <button data-x class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-xl leading-none px-1" aria-label="Close">&times;</button>
       </div>
-      <div class="flex-1 min-h-0 flex items-center justify-center bg-gray-50 dark:bg-gray-700 p-3">
-        <canvas data-cv class="max-w-full max-h-[50vh] rounded shadow touch-none"></canvas>
+      <div class="flex-1 min-h-[120px] flex items-center justify-center bg-gray-50 dark:bg-gray-700 p-3">
+        <canvas data-cv class="max-w-full max-h-[45vh] rounded shadow touch-none"></canvas>
       </div>
-      <div class="p-4 space-y-3 border-t border-gray-200 dark:border-gray-700">
+      <div class="p-4 space-y-3 border-t border-gray-200 dark:border-gray-700 overflow-y-auto min-h-0">
         <div class="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 text-sm">
           <button data-mode="all" class="flex-1 py-1.5 font-medium">Whole image</button>
           <button data-mode="brush" class="flex-1 py-1.5 font-medium">Paint areas</button>
@@ -30,59 +40,73 @@ function openBlurTool() {
           <span class="w-16">Strength</span>
           <input data-str type="range" min="1" max="100" value="40" class="flex-1 accent-indigo-500" />
         </label>
-        <label data-brushrow class="hidden items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-          <span class="w-16">Brush</span>
-          <input data-brush type="range" min="2" max="30" value="10" class="flex-1 accent-indigo-500" />
+        <div data-brushrow class="hidden items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+          <label class="flex flex-1 items-center gap-3">
+            <span class="w-16">Brush</span>
+            <input data-brush type="range" min="2" max="30" value="10" class="flex-1 accent-indigo-500" />
+          </label>
+          <button data-undo class="underline hover:text-gray-700 dark:hover:text-gray-200">Undo</button>
           <button data-clear class="underline hover:text-gray-700 dark:hover:text-gray-200">Clear</button>
-        </label>
-        <p class="text-[11px] text-gray-400 dark:text-gray-500">Saved copy has metadata (EXIF, GPS) removed.</p>
-        <button data-dl class="w-full py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">Download</button>
+        </div>
+        <p data-note class="text-[11px] text-gray-400 dark:text-gray-500">Saved copy has metadata (EXIF, GPS) removed.</p>
+        <button data-dl class="w-full py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white transition-colors">Download</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
   const $ = (q) => modal.querySelector(q);
-  const cv = $('[data-cv]'), ctx = cv.getContext('2d');
-  let base, blurred, mask, mctx, mode = 'all', drawing = false, raf = 0, strT = 0;
+  const cv = $('[data-cv]'), ctx = cv.getContext('2d'), dl = $('[data-dl]');
+  let img, base, blurred, mask, mctx, scratch, pw = 0, ph = 0;
+  let mode = 'all', drawing = false, raf = 0, strT = 0;
+  const strokes = []; // { w: brush width as a fraction of the long side, pts: [[nx, ny], ...] }
+  let pendingShare = null;
 
-  const close = () => { cancelAnimationFrame(raf); clearTimeout(strT); document.removeEventListener('keydown', onKey); modal.remove(); };
+  const close = () => {
+    cancelAnimationFrame(raf); clearTimeout(strT);
+    document.removeEventListener('keydown', onKey);
+    release(base, blurred, mask, scratch, cv);
+    modal.remove();
+  };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   $('[data-x]').onclick = close;
-  modal.addEventListener('mousedown', (e) => { if (e.target === modal) close(); });
+  // a stray tap on the backdrop shouldn't throw away painted work
+  modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length) close(); });
 
-  const mk = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
-  const hasFilter = 'filter' in CanvasRenderingContext2D.prototype;
+  const sigmaFor = (w, h) => $('[data-str]').value / 100 * Math.max(w, h) * SIGMA_AT_FULL_STRENGTH;
+  const dirty = () => { pendingShare = null; dl.textContent = 'Download'; };
 
   function makeBlur() {
-    const w = base.width, h = base.height;
-    const r = $('[data-str]').value / 100 * Math.max(w, h) * 0.03;
-    blurred = mk(w, h);
-    const b = blurred.getContext('2d');
-    if (hasFilter) {
-      // draw oversized so edges don't fade to transparent
-      const pad = Math.ceil(r * 2);
-      b.filter = `blur(${r}px)`;
-      b.drawImage(base, -pad, -pad, w + pad * 2, h + pad * 2);
-    } else {
-      const f = Math.max(1, r), t = mk(Math.max(1, Math.round(w / f)), Math.max(1, Math.round(h / f)));
-      const tc = t.getContext('2d'); tc.imageSmoothingQuality = 'high';
-      tc.drawImage(base, 0, 0, t.width, t.height);
-      b.imageSmoothingQuality = 'high';
-      b.drawImage(t, 0, 0, w, h);
-    }
+    release(blurred);
+    blurred = blurCanvas(base, sigmaFor(pw, ph));
     render();
   }
 
+  function paintStroke(c, s, w, h, from = 0) {
+    c.lineCap = c.lineJoin = 'round';
+    c.strokeStyle = '#000';
+    c.lineWidth = s.w * Math.max(w, h);
+    for (let i = from; i < s.pts.length; i++) {
+      const [ax, ay] = s.pts[i - 1] || s.pts[i], [bx, by] = s.pts[i];
+      c.beginPath(); c.moveTo(ax * w, ay * h); c.lineTo(bx * w, by * h); c.stroke();
+    }
+  }
+  function repaintMask() {
+    mctx.clearRect(0, 0, pw, ph);
+    strokes.forEach(s => paintStroke(mctx, s, pw, ph));
+  }
+
   function render() {
-    const w = base.width, h = base.height;
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, pw, ph);
     if (mode === 'all') { ctx.drawImage(blurred, 0, 0); return; }
     ctx.drawImage(base, 0, 0);
-    const t = mk(w, h), tc = t.getContext('2d');
-    tc.drawImage(blurred, 0, 0);
-    tc.globalCompositeOperation = 'destination-in';
-    tc.drawImage(mask, 0, 0);
-    ctx.drawImage(t, 0, 0);
+    if (!strokes.length) return;
+    const sc = scratch.getContext('2d');
+    sc.globalCompositeOperation = 'source-over';
+    sc.clearRect(0, 0, pw, ph);
+    sc.drawImage(blurred, 0, 0);
+    sc.globalCompositeOperation = 'destination-in';
+    sc.drawImage(mask, 0, 0);
+    ctx.drawImage(scratch, 0, 0);
   }
   const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); };
 
@@ -96,52 +120,113 @@ function openBlurTool() {
     row.classList.toggle('hidden', m !== 'brush');
     row.classList.toggle('flex', m === 'brush');
     cv.style.cursor = m === 'brush' ? 'crosshair' : 'default';
+    dirty();
     if (base) render();
   }
   modal.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
   setMode('all');
 
-  $('[data-str]').oninput = () => { clearTimeout(strT); strT = setTimeout(makeBlur, 60); };
-  $('[data-clear]').onclick = () => { mctx.clearRect(0, 0, mask.width, mask.height); render(); };
+  $('[data-str]').oninput = () => { dirty(); clearTimeout(strT); strT = setTimeout(makeBlur, 60); };
+  $('[data-undo]').onclick = () => { strokes.pop(); repaintMask(); render(); dirty(); };
+  $('[data-clear]').onclick = () => { strokes.length = 0; repaintMask(); render(); dirty(); };
 
-  let last = null;
-  function stroke(e) {
+  function addPoint(e, s) {
     const r = cv.getBoundingClientRect();
-    const x = (e.clientX - r.left) * cv.width / r.width, y = (e.clientY - r.top) * cv.height / r.height;
-    mctx.lineCap = mctx.lineJoin = 'round';
-    mctx.strokeStyle = '#000';
-    mctx.lineWidth = $('[data-brush]').value / 100 * Math.max(mask.width, mask.height) * 0.5;
-    mctx.beginPath(); mctx.moveTo(...(last || [x, y])); mctx.lineTo(x, y); mctx.stroke();
-    last = [x, y]; schedule();
+    s.pts.push([(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]);
   }
   cv.addEventListener('pointerdown', (e) => {
     if (mode !== 'brush') return;
-    drawing = true; last = null; cv.setPointerCapture(e.pointerId); stroke(e);
+    drawing = true; cv.setPointerCapture(e.pointerId);
+    const s = { w: $('[data-brush]').value / 100 * 0.5, pts: [] };
+    strokes.push(s); addPoint(e, s); paintStroke(mctx, s, pw, ph); schedule(); dirty();
   });
-  cv.addEventListener('pointermove', (e) => { if (drawing) stroke(e); });
-  const end = () => { drawing = false; last = null; };
+  cv.addEventListener('pointermove', (e) => {
+    if (!drawing) return;
+    const s = strokes[strokes.length - 1], from = s.pts.length;
+    for (const ev of e.getCoalescedEvents?.() ?? [e]) addPoint(ev, s);
+    paintStroke(mctx, s, pw, ph, from); schedule();
+  });
+  const end = () => { drawing = false; };
   cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
 
-  $('[data-dl]').onclick = () => {
-    render();
-    cv.toBlob((blob) => {
-      if (!blob) return alert('Could not export image.');
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `${origName}-blurred.${outExt}`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    }, outType, 0.92);
+  // Full-resolution render. Canvases are released as soon as they're consumed to keep peak memory low.
+  async function exportBlob() {
+    const k = Math.min(1, EXPORT_MAX / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+    const orig = mk(w, h);
+    orig.getContext('2d').drawImage(img, 0, 0, w, h);
+    const soft = blurCanvas(orig, sigmaFor(w, h));
+    let out = soft;
+    if (mode === 'brush') {
+      const m = mk(w, h), mc = m.getContext('2d');
+      strokes.forEach(s => paintStroke(mc, s, w, h));
+      const sc = soft.getContext('2d');
+      sc.globalCompositeOperation = 'destination-in';
+      sc.drawImage(m, 0, 0);
+      release(m);
+      orig.getContext('2d').drawImage(soft, 0, 0);
+      release(soft);
+      out = orig;
+    } else {
+      release(orig);
+    }
+    const blob = await new Promise(r => out.toBlob(r, outType, 0.92));
+    release(out);
+    return blob;
+  }
+
+  function saveFile(file) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file);
+    a.download = file.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  // Phones: the share sheet offers "Save Image" to Photos; a plain download only opens a viewer.
+  async function deliver(file) {
+    if (isTouch && navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; }
+      catch (e) {
+        if (e.name === 'AbortError') return;
+        if (e.name === 'NotAllowedError') { pendingShare = file; dl.textContent = 'Tap to save'; return; } // gesture expired during render
+      }
+    }
+    saveFile(file);
+  }
+
+  dl.onclick = async () => {
+    if (pendingShare) {
+      const file = pendingShare; dirty();
+      try { await navigator.share({ files: [file] }); } catch (e) { if (e.name !== 'AbortError') saveFile(file); }
+      return;
+    }
+    dl.disabled = true; dl.textContent = 'Processing…';
+    await new Promise(r => setTimeout(r, 30)); // let the label paint before the heavy work
+    try {
+      const blob = await exportBlob();
+      if (!blob) throw new Error('empty');
+      await deliver(new File([blob], `${origName}-blurred.${outExt}`, { type: outType }));
+    } catch {
+      alert('Could not export the image. It may be too large for this device.');
+    } finally {
+      dl.disabled = false;
+      if (!pendingShare) dl.textContent = 'Download';
+    }
   };
 
-  const img = new Image();
+  img = new Image();
   img.onload = () => {
-    const sc = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
-    const w = Math.round(img.naturalWidth * sc), h = Math.round(img.naturalHeight * sc);
-    base = mk(w, h);
-    base.getContext('2d').drawImage(img, 0, 0, w, h);
-    cv.width = w; cv.height = h;
-    mask = mk(w, h); mctx = mask.getContext('2d');
+    const long = Math.max(img.naturalWidth, img.naturalHeight);
+    const k = Math.min(1, PREVIEW_MAX / long);
+    pw = Math.round(img.naturalWidth * k); ph = Math.round(img.naturalHeight * k);
+    base = mk(pw, ph); base.getContext('2d').drawImage(img, 0, 0, pw, ph);
+    mask = mk(pw, ph); mctx = mask.getContext('2d');
+    scratch = mk(pw, ph);
+    cv.width = pw; cv.height = ph;
+    if (long > EXPORT_MAX) {
+      const e = EXPORT_MAX / long;
+      $('[data-note]').textContent += ` Large image: saved at ${Math.round(img.naturalWidth * e)}×${Math.round(img.naturalHeight * e)}.`;
+    }
     makeBlur();
   };
   img.onerror = () => { close(); alert('Could not load image.'); };
