@@ -6,8 +6,6 @@ export const EFFECTS = ['blur', 'pixelate', 'solid'];
 let blurImpl = null;
 export const setBlurImpl = (fn) => { blurImpl = fn; };
 
-export const pixelBlockSize = (strength, w, h) => Math.max(2, Math.round(strength / 100 * Math.max(w, h) * 0.06));
-
 // Cell grid for pixelate; the count depends only on strength and aspect, so preview and export match at any size.
 export function pixelCells(strength, w, h) {
   const long = Math.max(w, h), short = Math.min(w, h);

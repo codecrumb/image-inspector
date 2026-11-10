@@ -47,14 +47,15 @@ export function sanitizeExifSegment(seg) {
   if (ifd1 < 8 || ifd1 + 2 > size) return null;
   const n1 = v.getUint16(ifd1, le);
   if (ifd1 + 2 + n1 * 12 > size) return null;
-  let start = 0, length = 0;
+  let start = 0, length = 0, hasThumb = false;
   for (let i = 0; i < n1; i++) {
     const e = ifd1 + 2 + i * 12;
     const tag = v.getUint16(e, le);
     if (tag !== 0x0201 && tag !== 0x0202) continue;
     const val = v.getUint16(e + 2, le) === 3 ? v.getUint16(e + 8, le) : v.getUint32(e + 8, le);
-    if (tag === 0x0201) start = val; else length = val;
+    if (tag === 0x0201) { start = val; hasThumb = true; } else length = val;
   }
+  if (!hasThumb) return null; // thumbnail may be strip-based and not locatable; fail closed
   if (start > 0 && start < size) {
     const end = length > 0 && start + length <= size ? start + length : size;
     out.fill(0, t + start, t + end);

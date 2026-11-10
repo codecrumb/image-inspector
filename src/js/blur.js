@@ -22,10 +22,12 @@ const release = (...cs) => cs.forEach(c => { if (c) c.width = c.height = 0; });
 function openBlurTool() {
   const src = document.getElementById('preview')._prevURL;
   if (!src || document.getElementById('blurModal')) return;
+  // The page can't change while the dialog is open, but snapshot anyway so an export never mixes in another photo's data.
+  const srcBuf = state.currentBuffer, srcMime = state.currentMime, srcRows = state.currentExifRows, srcSize = state.imageQueue[state.queueIndex]?.file.size;
   const origName = (state.imageQueue[state.queueIndex]?.file.name || 'image').replace(/\.[^.]+$/, '');
   const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
   const webpOk = document.createElement('canvas').toDataURL('image/webp').startsWith('data:image/webp'); // Safari falls back to PNG
-  let outType = EXT[state.currentMime] && (webpOk || state.currentMime !== 'image/webp') ? state.currentMime : 'image/png';
+  let outType = EXT[srcMime] && (webpOk || srcMime !== 'image/webp') ? srcMime : 'image/png';
 
   const modal = document.createElement('div');
   modal.id = 'blurModal';
@@ -117,15 +119,15 @@ function openBlurTool() {
 
   const strength = () => +$('[data-str]').value;
   const dirty = () => { pendingShare = null; if (!cp.disabled) { clearTimeout(cpT); cp.textContent = 'Copy'; } dl.textContent = 'Download'; $('[data-report]').textContent = ''; queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
-  const report = (kept) => { if (!closed) $('[data-report]').textContent = describeMetadata(state.currentExifRows, kept); };
+  const report = (kept) => { if (!closed) $('[data-report]').textContent = describeMetadata(srcRows, kept); };
   const strip = () => $('[data-strip]').checked;
-  const fromJpeg = state.currentMime === 'image/jpeg';
-  const hasExif = fromJpeg && !!extractExifSegment(new Uint8Array(state.currentBuffer));
+  const fromJpeg = srcMime === 'image/jpeg';
+  const hasExif = fromJpeg && !!extractExifSegment(new Uint8Array(srcBuf));
   let sizeNote = '', dropped = false;
   function renderNote() {
     const msg = strip() ? 'Saved copy has metadata removed.'
       : dropped ? 'The original\'s metadata could not be kept safely, so it was removed.'
-      : fromJpeg && outType === 'image/jpeg' && !hasExif ? 'The original has no camera info or GPS, so there is nothing to keep.'
+      : fromJpeg && outType === 'image/jpeg' && !hasExif ? 'The original has no EXIF camera info or GPS, so there is nothing to keep.'
       : fromJpeg && outType === 'image/jpeg' ? 'Camera info and GPS from the original are kept. The built-in preview is removed, but some camera makers hide extra previews in their own data that may remain.'
       : 'Only JPEG can keep metadata; this file will still be stripped.';
     $('[data-note]').textContent = msg + sizeNote;
@@ -146,7 +148,7 @@ function openBlurTool() {
   $('[data-q]').oninput = $('[data-target]').oninput = syncOutput;
   syncOutput();
   function showSize(blob, reached) {
-    const o = state.imageQueue[state.queueIndex]?.file.size, el = $('[data-size]');
+    const o = srcSize, el = $('[data-size]');
     el.classList.remove('hidden');
     el.textContent = (o ? `Original ${formatBytes(o)} → ` : 'Saved size: ') + formatBytes(blob.size)
       + (reached ? '' : ` · Smallest possible: ${formatBytes(blob.size)}`);
@@ -154,10 +156,12 @@ function openBlurTool() {
   // Desktop only: re-render and encode shortly after the last change; runs are serialized and never outlive the modal.
   function queueReadout() {
     if (isTouch || closed || !base) return;
-    clearTimeout(roT); roT = setTimeout(runReadout, 500);
+    clearTimeout(roT);
+    if (drawing) { roAgain = roRunning; return; } // end of stroke re-queues
+    roT = setTimeout(runReadout, 500);
   }
   async function runReadout() {
-    if (closed) return;
+    if (closed || drawing) return;
     if (roRunning) { roAgain = true; return; }
     roRunning = true;
     try {
@@ -168,6 +172,12 @@ function openBlurTool() {
       } while (roAgain && !closed);
     } catch { /* the readout is best-effort */ }
     roRunning = false;
+  }
+
+  // Stop a pending readout and wait out a running one so two full-size exports never overlap.
+  async function quiesce() {
+    clearTimeout(roT); roAgain = false;
+    while (roRunning) await new Promise(r => setTimeout(r, 30));
   }
 
   const layerFor = (f) => layers[f] ||= effectLayer(f, base, strength());
@@ -269,7 +279,7 @@ function openBlurTool() {
     for (const ev of e.getCoalescedEvents?.() ?? [e]) addPoint(ev, s);
     paintStroke(maskFor(s.fx).getContext('2d'), s, pw, ph, from); schedule();
   });
-  const end = () => { drawing = false; };
+  const end = () => { if (drawing) { drawing = false; queueReadout(); } };
   cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
 
   // Full-resolution render of the final composite. Intermediate canvases are released as soon as they're consumed.
@@ -308,7 +318,7 @@ function openBlurTool() {
     const blob = await new Promise(r => canvas.toBlob(r, type, q));
     if (!blob || strip() || !fromJpeg || type !== 'image/jpeg') return { blob, kept: false };
     dropped = false;
-    const seg = extractExifSegment(new Uint8Array(state.currentBuffer));
+    const seg = extractExifSegment(new Uint8Array(srcBuf));
     const safe = seg && sanitizeExifSegment(seg);
     if (!safe) { dropped = !!seg; renderNote(); return { blob, kept: false }; }
     return { blob: new Blob([injectExifSegment(new Uint8Array(await blob.arrayBuffer()), safe)], { type }), kept: true };
@@ -360,6 +370,7 @@ function openBlurTool() {
     }
     dl.disabled = true; dl.textContent = 'Processing…';
     await new Promise(r => setTimeout(r, 30)); // let the label paint before the heavy work
+    await quiesce();
     try {
       const type = outType, { blob, kept, reached } = await exportBlob();
       if (!blob) throw new Error('empty');
@@ -368,13 +379,14 @@ function openBlurTool() {
     } catch {
       alert('Could not export the image. It may be too large for this device.');
     } finally {
-      dl.disabled = false;
+      dl.disabled = false; queueReadout();
       if (!pendingShare) dl.textContent = 'Download';
     }
   };
 
   // Clipboard only reliably takes PNG, so Copy ignores the chosen format, metadata and target size.
   async function pngBlob() {
+    await quiesce();
     const canvas = await renderFinal();
     try {
       const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
@@ -391,6 +403,7 @@ function openBlurTool() {
       try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob() })]); } // promise keeps Safari's user gesture
       catch { ok = false; }
       if (closed) return;
+      queueReadout();
       cp.disabled = false; cp.textContent = ok ? 'Copied' : 'Copy failed';
       if (ok) report(false);
       cpT = setTimeout(() => { cp.textContent = 'Copy'; }, 1500);
@@ -399,6 +412,7 @@ function openBlurTool() {
 
   img = new Image();
   img.onload = () => {
+    if (closed) return;
     const long = Math.max(img.naturalWidth, img.naturalHeight);
     const k = Math.min(1, PREVIEW_MAX / long);
     pw = Math.round(img.naturalWidth * k); ph = Math.round(img.naturalHeight * k);

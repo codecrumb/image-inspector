@@ -17,3 +17,8 @@ test('structural rows are ignored', () => {
   assert.equal(describeMetadata(r('JFIF Version', 'Encoding', 'YCbCr Subsampling'), false), 'No metadata found in the original.');
   assert.equal(describeMetadata(r('JFIF Version', 'Flash'), false), 'Removed: 1 other field.');
 });
+test('count-only form', () => {
+  const rows = [['Flash', 'Fired'], ['ISO', '100'], ['Exposure', '1/60s']];
+  assert.equal(describeMetadata(rows, false), 'Removed: 3 other fields.');
+  assert.equal(describeMetadata(rows, true), 'Kept: 3 other fields.');
+});

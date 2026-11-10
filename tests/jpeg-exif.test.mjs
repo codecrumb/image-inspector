@@ -5,7 +5,7 @@ import { extractExifSegment, sanitizeExifSegment, injectExifSegment } from '../s
 const THUMB = [0xff, 0xd8, 0xaa, 0xbb];
 
 // TIFF: header, IFD0 {orientation, ifd1 link}, IFD1 {0x0201, 0x0202}, thumbnail
-function buildExif(le, orientation = 6, withThumb = true, { short = false, noLen = false } = {}) {
+function buildExif(le, orientation = 6, withThumb = true, { short = false, noLen = false, noStart = false } = {}) {
   const tiff = new Uint8Array(8 + 2 + 12 + 4 + 2 + 24 + 4 + THUMB.length);
   const v = new DataView(tiff.buffer);
   tiff.set([le ? 0x49 : 0x4d, le ? 0x49 : 0x4d]);
@@ -17,7 +17,7 @@ function buildExif(le, orientation = 6, withThumb = true, { short = false, noLen
   v.setUint32(22, withThumb ? ifd1 : 0, le);
   const thumbOff = ifd1 + 2 + 24 + 4;
   v.setUint16(ifd1, 2, le);
-  v.setUint16(ifd1 + 2, 0x0201, le); v.setUint16(ifd1 + 4, short ? 3 : 4, le); v.setUint32(ifd1 + 6, 1, le); if (short) v.setUint16(ifd1 + 10, thumbOff, le); else v.setUint32(ifd1 + 10, thumbOff, le);
+  v.setUint16(ifd1 + 2, noStart ? 0x0213 : 0x0201, le); v.setUint16(ifd1 + 4, short ? 3 : 4, le); v.setUint32(ifd1 + 6, 1, le); if (short) v.setUint16(ifd1 + 10, thumbOff, le); else v.setUint32(ifd1 + 10, thumbOff, le);
   v.setUint16(ifd1 + 14, noLen ? 0x0213 : 0x0202, le); v.setUint16(ifd1 + 16, 4, le); v.setUint32(ifd1 + 18, 1, le); v.setUint32(ifd1 + 22, noLen ? 0 : THUMB.length, le);
   tiff.set(THUMB, thumbOff);
   const body = new Uint8Array(6 + tiff.length);
@@ -133,4 +133,9 @@ test('injectExifSegment: invalid or oversize segment returns a copy of the jpeg'
     assert.deepEqual(out, j);
     assert.notEqual(out, j);
   }
+});
+
+test('sanitizeExifSegment: IFD1 without a JPEG thumbnail pointer fails closed', () => {
+  for (const le of [true, false]) assert.equal(sanitizeExifSegment(buildExif(le, 6, true, { noStart: true })), null);
+  assert.ok(sanitizeExifSegment(buildExif(true, 6, false)), 'no IFD1 still fine');
 });

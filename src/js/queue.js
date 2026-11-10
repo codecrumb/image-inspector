@@ -18,6 +18,7 @@ function analyzeFile(file, sourceUrl = null, onDone = null) {
 
 // ── Batch queue ───────────────────────────────────────────────────────────
 export function queueFiles(files, sourceUrl = null, existingCacheIds = null) {
+  if (document.getElementById('blurModal')) return; // the page must not change behind the Blur dialog
   const firstNewIdx = state.imageQueue.length;
   Array.from(files).forEach((file, i) => {
     const slot = { file, sourceUrl, cacheId: existingCacheIds ? existingCacheIds[i] : null, status: 'analyzing', result: null };
