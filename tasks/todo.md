@@ -26,7 +26,7 @@ Plan: ~/.claude/plans/jiggly-imagining-comet.md (branch: feat/blur-download)
 # Workbench phase 2 (geometry: rotate, flip, crop, resize)
 
 ## Review
-- `npm test`: 35 pass; `npm run build` clean. Scripts in the session scratchpad (`p2.mjs`, reused `t7e2e/e2e.mjs`), run against `dist/` in Playwright Chromium and the WebKit iPhone 13 profile. 33/33 geometry checks pass in each browser; the phase 1 suite passes in both (22 Chromium, 24 WebKit).
+- `npm test`: 38 pass after the review-fix wave (35 before); `npm run build` clean. Scripts in the session scratchpad (`p2.mjs`, reused `t7e2e/e2e.mjs`), run against `dist/` in Playwright Chromium and the WebKit iPhone 13 profile. 33/33 geometry checks pass in each browser; the phase 1 suite passes in both (22 Chromium, 24 WebKit).
 
 | Check | Chromium | WebKit iPhone |
 |---|---|---|
@@ -43,3 +43,4 @@ Plan: ~/.claude/plans/jiggly-imagining-comet.md (branch: feat/blur-download)
 
 - Fixed in this task (Task 4 review): width chips have aria-labels, `aria-pressed` and an active style tracking the width; `setRw` ignores non-finite input; `renderFinal` sizes the resize from the dimensions it just rendered.
 - NOT tested on a real device: touch crop (real finger drags, pinch/second finger; tests use synthesized pointer events), iOS share sheet save, Safari clipboard (Copy), touch memory limits with the 3072 cap and a replayed op chain. "Copy dimensions" was read as the Copy button / width readout; there is no separate copy-dimensions control.
+- Review-fix wave (Chromium + WebKit iPhone, all pass): Transform-row Undo works in Whole image mode (crop then Undo restores), disabled during crop; Esc with edits asks to discard (dismiss keeps, accept closes), Esc with none closes, Esc in crop only cancels crop; Ctrl/Cmd+Z in Width field leaves geometry alone, Ctrl+Z mid-stroke does not throw; a long 2-point stroke crossing a crop survives and paints the exported pixels (segment-aware keep test); crop source rect clamped inside the image; no horizontal overflow at 360x640; EXIF note adds "Picture size in the camera data still shows the original." only when metadata is kept and the picture was changed.

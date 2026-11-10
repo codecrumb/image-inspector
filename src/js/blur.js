@@ -50,11 +50,12 @@ function openBlurTool() {
         <div class="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 text-sm">
           ${EFFECTS.map(f => `<button data-fx="${f}" class="flex-1 py-1.5 font-medium">${FX_LABEL[f]}</button>`).join('')}
         </div>
-        <div class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-gray-500 dark:text-gray-400">
           <span class="w-16">Transform</span>
-          <div class="flex gap-1.5 text-base leading-none">
+          <div class="flex flex-wrap gap-1.5 text-base leading-none">
             ${[['crop', 'Crop', 'Crop'], ['rotl', '↺', 'Rotate left'], ['rotr', '↻', 'Rotate right'], ['flipx', '⇆', 'Mirror'], ['flipy', '⇅', 'Flip vertically']].map(([k, g, t]) =>
               `<button data-${k} title="${t}" aria-label="${t}" class="${k === 'crop' ? 'px-2.5 text-sm' : 'w-9'} py-1.5 rounded border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">${g}</button>`).join('')}
+            <button data-tundo title="Undo" aria-label="Undo" disabled class="px-2.5 text-sm py-1.5 rounded border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40">Undo</button>
           </div>
         </div>
         <div data-croprow class="hidden items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
@@ -137,18 +138,19 @@ function openBlurTool() {
     release(base, scratch, cv);
     modal.remove();
   };
+  const hasWork = () => strokes.length || ops.length || cropping || crop;
   const onKey = (e) => {
-    if (e.key === 'Escape') { if (cropping) exitCrop(); else close(); }
+    if (e.key === 'Escape') { if (cropping) exitCrop(); else if (!hasWork() || confirm('Discard your edits?')) close(); }
     else if (cropping) { if (e.key === 'Enter' && !e.target.closest?.('input,button,select,textarea')) { e.preventDefault(); applyCrop(); } }
-    else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && (mode === 'brush' || undoStack[undoStack.length - 1]?.geom)) { e.preventDefault(); undo(); }
+    else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !e.target.closest?.('input,select,textarea') && (mode === 'brush' || undoStack[undoStack.length - 1]?.geom)) { e.preventDefault(); undo(); }
   };
   document.addEventListener('keydown', onKey);
   $('[data-x]').onclick = close;
   // a stray tap on the backdrop shouldn't throw away painted work
-  modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length && !ops.length && !cropping) close(); });
+  modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !hasWork()) close(); });
 
   const strength = () => +$('[data-str]').value;
-  const dirty = () => { pendingShare = null; if (!cp.disabled) { clearTimeout(cpT); cp.textContent = 'Copy'; } dl.textContent = 'Download'; $('[data-report]').textContent = ''; queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
+  const dirty = () => { pendingShare = null; if (!cp.disabled) { clearTimeout(cpT); cp.textContent = 'Copy'; } dl.textContent = 'Download'; $('[data-report]').textContent = ''; updateUndo(); queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
   const report = (kept) => { if (!closed) $('[data-report]').textContent = describeMetadata(srcRows, kept); };
   const strip = () => $('[data-strip]').checked;
   const fromJpeg = srcMime === 'image/jpeg';
@@ -160,7 +162,8 @@ function openBlurTool() {
       : fromJpeg && outType === 'image/jpeg' && !hasExif ? 'The original has no EXIF camera info or GPS, so there is nothing to keep.'
       : fromJpeg && outType === 'image/jpeg' ? 'Camera info and GPS from the original are kept. The built-in preview is removed, but some camera makers hide extra previews in their own data that may remain.'
       : 'Only JPEG can keep metadata; this file will still be stripped.';
-    $('[data-note]').textContent = msg + sizeNote;
+    const changed = !strip() && fromJpeg && outType === 'image/jpeg' && hasExif && !dropped && (ops.length || outSize());
+    $('[data-note]').textContent = msg + (changed ? ' Picture size in the camera data still shows the original.' : '') + sizeNote;
   }
   $('[data-strip]').onchange = () => { dropped = false; renderNote(); dirty(); };
   renderNote();
@@ -283,6 +286,7 @@ function openBlurTool() {
     box = document.createElement('div'); box.className = 'absolute border-2 border-white'; box.style.boxShadow = '0 0 0 9999px rgba(0,0,0,.55)';
     ov.appendChild(box); cv.parentNode.appendChild(ov);
     for (const q of ['[data-crop]', '[data-rotl]', '[data-rotr]', '[data-flipx]', '[data-flipy]', '[data-undo]', '[data-clear]']) $(q).disabled = true;
+    $('[data-tundo]').disabled = true;
     $('[data-actions]').classList.add('hidden');
     $('[data-croprow]').classList.replace('hidden', 'flex');
     cv.style.cursor = 'crosshair';
@@ -297,6 +301,7 @@ function openBlurTool() {
     $('[data-actions]').classList.remove('hidden');
     $('[data-croprow]').classList.replace('flex', 'hidden');
     cv.style.cursor = mode === 'brush' ? 'crosshair' : 'default';
+    updateUndo();
   }
   function applyCrop() {
     const r = crop && clampCrop(crop, curW, curH);
@@ -378,14 +383,19 @@ function openBlurTool() {
   setFx('blur');
 
   $('[data-str]').oninput = () => { dirty(); clearTimeout(strT); strT = setTimeout(resetLayers, 60); };
+  function updateUndo() {
+    const last = undoStack[undoStack.length - 1];
+    $('[data-tundo]').disabled = cropping || !last || !(mode === 'brush' || last.geom);
+  }
   function undo() {
+    if (drawing) return;
     const last = undoStack.pop();
     if (!last) return;
     if (last.geom) { ops.pop(); strokes.splice(0, strokes.length, ...last.before); updateDims(); rebuildPreview(); }
     else if (last.cleared) strokes.push(...last.cleared); else strokes.pop();
     repaintMask(); render(); dirty();
   }
-  $('[data-undo]').onclick = undo;
+  $('[data-undo]').onclick = $('[data-tundo]').onclick = undo;
   $('[data-clear]').onclick = () => {
     if (!strokes.length) return;
     undoStack.push({ cleared: strokes.splice(0) });

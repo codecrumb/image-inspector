@@ -7,6 +7,23 @@ export function opDims(op, w, h) {
   return [w, h];
 }
 
+// Liang-Barsky: does the segment a-b touch the axis-aligned rect [x0, y0, x1, y1]?
+function segHitsRect([ax, ay], [bx, by], [x0, y0, x1, y1]) {
+  let t0 = 0, t1 = 1;
+  for (const [p, q] of [[ax - bx, ax - x0], [bx - ax, x1 - ax], [ay - by, ay - y0], [by - ay, y1 - ay]]) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const r = q / p;
+    if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; } else { if (r < t0) return false; if (r < t1) t1 = r; }
+  }
+  return true;
+}
+
+// Source rectangle for a crop, kept inside the image (rounding both x and w could overshoot by 1 px).
+export function cropRect(op, w, h) {
+  const [nw, nh] = opDims(op, w, h);
+  return { sx: Math.min(Math.round(op.x * w), w - nw), sy: Math.min(Math.round(op.y * h), h - nh), nw, nh };
+}
+
 // Returns new strokes for the image after `op`; (w, h) are the dimensions before it.
 export function transformStrokes(strokes, op, w, h) {
   const mapPts = (f) => strokes.map((s) => ({ ...s, pts: s.pts.map(f) }));
@@ -16,7 +33,8 @@ export function transformStrokes(strokes, op, w, h) {
   const out = [];
   for (const s of strokes) {
     const r = s.w * long / 2, x0 = op.x * w - r, x1 = (op.x + op.w) * w + r, y0 = op.y * h - r, y1 = (op.y + op.h) * h + r;
-    if (!s.pts.some(([x, y]) => x * w >= x0 && x * w <= x1 && y * h >= y0 && y * h <= y1)) continue;
+    const P = s.pts.map(([x, y]) => [x * w, y * h]), rect = [x0, y0, x1, y1];
+    if (!P.some(([x, y]) => x >= x0 && x <= x1 && y >= y0 && y <= y1) && !P.some((p, i) => i && segHitsRect(P[i - 1], p, rect))) continue;
     out.push({ ...s, w: s.w * scale, pts: s.pts.map(([x, y]) => [(x - op.x) / op.w, (y - op.y) / op.h]) });
   }
   return out;
@@ -53,7 +71,8 @@ export function applyOp(src, op, w, h) {
     ctx.scale(x ? -1 : 1, x ? 1 : -1);
     ctx.drawImage(src, 0, 0);
   } else {
-    ctx.drawImage(src, Math.round(op.x * w), Math.round(op.y * h), nw, nh, 0, 0, nw, nh);
+    const { sx, sy } = cropRect(op, w, h);
+    ctx.drawImage(src, sx, sy, nw, nh, 0, 0, nw, nh);
   }
   return out;
 }

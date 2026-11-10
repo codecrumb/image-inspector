@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { opDims, transformStrokes, clampCrop, fitSize } from '../src/js/geometry.js';
+import { opDims, transformStrokes, clampCrop, fitSize, cropRect } from '../src/js/geometry.js';
 
 const CW = { type: 'rot', dir: 1 }, CCW = { type: 'rot', dir: -1 };
 const FX = { type: 'flip', axis: 'x' }, FY = { type: 'flip', axis: 'y' };
@@ -59,4 +59,16 @@ test('fitSize keeps ratio and clamps the long side', () => {
   assert.deepEqual(fitSize(4000, 3000, 1000, 4096), [1000, 750]);
   assert.deepEqual(fitSize(4000, 3000, 9000, 4096), [4096, 3072]);
   assert.deepEqual(fitSize(100, 100, 0, 4096), [1, 1]);
+});
+test('crop keeps a long stroke whose segment crosses the crop but whose points are outside', () => {
+  const op = { type: 'crop', x: 0.4, y: 0.4, w: 0.2, h: 0.2 };
+  assert.equal(transformStrokes(st([[0.05, 0.5], [0.95, 0.5]], 0.02), op, 1000, 1000).length, 1);
+});
+test('crop drops a stroke whose segment passes beside the grown crop', () => {
+  const op = { type: 'crop', x: 0.4, y: 0.4, w: 0.2, h: 0.2 };
+  assert.equal(transformStrokes(st([[0.05, 0.1], [0.95, 0.1]], 0.02), op, 1000, 1000).length, 0);
+});
+test('cropRect stays inside the source', () => {
+  const r = cropRect({ type: 'crop', x: 0.3335, y: 0, w: 0.6665, h: 1 }, 1000, 500);
+  assert.ok(r.sx + r.nw <= 1000 && r.sy + r.nh <= 500);
 });
