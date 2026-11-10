@@ -4,7 +4,7 @@ import { EFFECTS, effectLayer, setBlurImpl } from './effects.js';
 import { findQualityForTarget } from './output.js';
 import { describeMetadata } from './metadata-report.js';
 import { formatBytes } from './util.js';
-import { opDims, transformStrokes, clampCrop, applyOp } from './geometry.js';
+import { opDims, transformStrokes, clampCrop, applyOp, fitSize } from './geometry.js';
 import { extractExifSegment, sanitizeExifSegment, injectExifSegment } from './parsers/jpeg-exif.js';
 
 setBlurImpl(blurCanvas);
@@ -78,6 +78,17 @@ function openBlurTool() {
           <input data-strip type="checkbox" checked class="accent-indigo-500" />
           <span>Remove metadata (EXIF, GPS)</span>
         </label>
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-gray-500 dark:text-gray-400">
+          <label class="flex items-center gap-2">
+            <span class="whitespace-nowrap">Width (px)</span>
+            <input data-rw type="number" min="1" step="1" inputmode="numeric" placeholder="Original" class="w-24 rounded border border-gray-200 dark:border-gray-600 bg-transparent px-1 py-1" />
+          </label>
+          <span data-rwh class="min-w-[4.5rem]"></span>
+          <div class="flex gap-1">
+            ${[[1080, '1080'], [1920, '1920'], [2048, '2048'], [0, 'Original']].map(([v, t]) => `<button type="button" data-rwp="${v}" class="px-2 py-1 rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700">${t}</button>`).join('')}
+          </div>
+        </div>
+        <p data-rwnote class="hidden text-[11px] text-amber-600 dark:text-amber-400"></p>
         <div class="grid grid-cols-2 gap-3 text-xs text-gray-500 dark:text-gray-400">
           <label class="flex items-center gap-2">
             <span>Format</span>
@@ -107,7 +118,8 @@ function openBlurTool() {
   const $ = (q) => modal.querySelector(q);
   const cv = $('[data-cv]'), ctx = cv.getContext('2d'), dl = $('[data-dl]'), cp = $('[data-copy]');
   let img, base, scratch, pw = 0, ph = 0;
-  const ops = []; // geometry applied in order: rotate / flip (crop, resize later)
+  const ops = []; // geometry applied in order: rotate / flip / crop
+  let rw = 0; // requested output width; 0 = Original
   let curW = 0, curH = 0, capW = 0, capH = 0, capped = false; // full-resolution size after ops (EXPORT_MAX cap applied first)
   const layers = {}, masks = {}; // per-effect preview layer and stroke mask, built lazily
   let mode = 'all', fx = 'blur', drawing = false, raf = 0, strT = 0;
@@ -164,6 +176,24 @@ function openBlurTool() {
   }
   $('[data-fmt]').onchange = (e) => { outType = e.target.value; syncOutput(); };
   $('[data-q]').oninput = $('[data-target]').oninput = syncOutput;
+  // Resize target as [w, h], or null when the output stays at the current size. Always capped like the export itself.
+  function outSize() {
+    if (!(rw >= 1) || !curW) return null;
+    const s = fitSize(curW, curH, rw, EXPORT_MAX);
+    return s[0] === curW && s[1] === curH ? null : s;
+  }
+  function refreshRw() {
+    const ok = rw >= 1 && curW, s = ok && fitSize(curW, curH, rw, EXPORT_MAX), o = outSize(), n = $('[data-rwnote]');
+    $('[data-rwh]').textContent = ok ? `× ${s[1]} px` : '';
+    n.textContent = ok && s[0] !== Math.round(rw) ? `Limited to ${EXPORT_MAX} px on the long side.` : '';
+    n.classList.toggle('hidden', !n.textContent);
+    const [fw, fh] = o || [curW, curH];
+    sizeNote = capped ? ` Large image: saved at ${fw}×${fh}.` : '';
+    renderNote();
+  }
+  function setRw(v) { rw = v >= 1 ? Math.round(v) : 0; refreshRw(); syncOutput(); }
+  $('[data-rw]').oninput = (e) => setRw(parseFloat(e.target.value));
+  modal.querySelectorAll('[data-rwp]').forEach(b => b.onclick = () => { const v = +b.dataset.rwp; $('[data-rw]').value = v || ''; setRw(v); });
   syncOutput();
   function showSize(blob, reached) {
     const o = srcSize, el = $('[data-size]');
@@ -226,7 +256,7 @@ function openBlurTool() {
   function updateDims() {
     [curW, curH] = [capW, capH];
     for (const op of ops) [curW, curH] = opDims(op, curW, curH);
-    if (capped) { sizeNote = ` Large image: saved at ${curW}×${curH}.`; renderNote(); }
+    refreshRw();
   }
   function applyGeometry(op) {
     if (closed || !base || drawing) return;
@@ -413,6 +443,12 @@ function openBlurTool() {
     } else {
       out = effectLayer(fx, orig, strength());
       release(orig);
+    }
+    const o = outSize();
+    if (o) {
+      const r = mk(o[0], o[1]), g = r.getContext('2d');
+      g.imageSmoothingQuality = 'high'; g.drawImage(out, 0, 0, o[0], o[1]);
+      release(out); out = r;
     }
     return out;
   }
