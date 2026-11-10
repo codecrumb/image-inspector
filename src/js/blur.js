@@ -4,7 +4,7 @@ import { EFFECTS, effectLayer, setBlurImpl } from './effects.js';
 import { findQualityForTarget } from './output.js';
 import { describeMetadata } from './metadata-report.js';
 import { formatBytes } from './util.js';
-import { opDims, transformStrokes, applyOp } from './geometry.js';
+import { opDims, transformStrokes, clampCrop, applyOp } from './geometry.js';
 import { extractExifSegment, sanitizeExifSegment, injectExifSegment } from './parsers/jpeg-exif.js';
 
 setBlurImpl(blurCanvas);
@@ -39,7 +39,7 @@ function openBlurTool() {
         <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">Blur &amp; Download</span>
         <button data-x class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-xl leading-none px-1" aria-label="Close">&times;</button>
       </div>
-      <div class="flex-1 min-h-[120px] flex items-center justify-center bg-gray-50 dark:bg-gray-700 p-3">
+      <div class="relative flex-1 min-h-[120px] flex items-center justify-center bg-gray-50 dark:bg-gray-700 p-3">
         <canvas data-cv class="max-w-full max-h-[45vh] rounded shadow touch-none"></canvas>
       </div>
       <div class="p-4 space-y-3 border-t border-gray-200 dark:border-gray-700 overflow-y-auto min-h-0">
@@ -53,9 +53,14 @@ function openBlurTool() {
         <div class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
           <span class="w-16">Transform</span>
           <div class="flex gap-1.5 text-base leading-none">
-            ${[['rotl', '↺', 'Rotate left'], ['rotr', '↻', 'Rotate right'], ['flipx', '⇆', 'Mirror'], ['flipy', '⇅', 'Flip vertically']].map(([k, g, t]) =>
-              `<button data-${k} title="${t}" aria-label="${t}" class="w-9 py-1.5 rounded border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">${g}</button>`).join('')}
+            ${[['crop', 'Crop', 'Crop'], ['rotl', '↺', 'Rotate left'], ['rotr', '↻', 'Rotate right'], ['flipx', '⇆', 'Mirror'], ['flipy', '⇅', 'Flip vertically']].map(([k, g, t]) =>
+              `<button data-${k} title="${t}" aria-label="${t}" class="${k === 'crop' ? 'px-2.5 text-sm' : 'w-9'} py-1.5 rounded border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">${g}</button>`).join('')}
           </div>
+        </div>
+        <div data-croprow class="hidden items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+          <span data-cropinfo class="flex-1 min-w-0">Drag on the picture to choose the area to keep.</span>
+          <button data-cropok class="px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white">Apply</button>
+          <button data-cropno class="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">Cancel</button>
         </div>
         <label data-strrow class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
           <span class="w-16">Strength</span>
@@ -91,7 +96,7 @@ function openBlurTool() {
         </label>
         <p data-size class="hidden text-xs text-gray-600 dark:text-gray-300"></p>
         <p data-note class="text-[11px] text-gray-400 dark:text-gray-500"></p>
-        <div class="flex gap-2">
+        <div data-actions class="flex gap-2">
           <button data-copy class="hidden px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-60 transition-colors">Copy</button>
           <button data-dl class="flex-1 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white transition-colors">Download</button>
         </div>
@@ -108,24 +113,27 @@ function openBlurTool() {
   let mode = 'all', fx = 'blur', drawing = false, raf = 0, strT = 0;
   const strokes = []; // { w: brush width as a fraction of the long side, fx, pts: [[nx, ny], ...] }
   const undoStack = []; // each entry: a painted stroke, { cleared: [...strokes] } so Clear can be undone too, or { geom, op, before: strokes }
+  let cropping = false, crop = null, cropDrag = null, ov, box; // crop: normalized { x, y, w, h } or null
   let pendingShare = null, closed = false, roT = 0, roRunning = false, roAgain = false, cpT = 0;
 
   const close = () => {
     closed = true;
     cancelAnimationFrame(raf); clearTimeout(strT); clearTimeout(roT); clearTimeout(cpT);
-    document.removeEventListener('keydown', onKey);
+    document.removeEventListener('keydown', onKey); removeEventListener('resize', layoutCrop);
+    ov?.remove();
     Object.values(layers).forEach(c => release(c)); Object.values(masks).forEach(c => release(c));
     release(base, scratch, cv);
     modal.remove();
   };
   const onKey = (e) => {
-    if (e.key === 'Escape') close();
+    if (e.key === 'Escape') { if (cropping) exitCrop(); else close(); }
+    else if (cropping) { if (e.key === 'Enter') { e.preventDefault(); applyCrop(); } }
     else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && (mode === 'brush' || undoStack[undoStack.length - 1]?.geom)) { e.preventDefault(); undo(); }
   };
   document.addEventListener('keydown', onKey);
   $('[data-x]').onclick = close;
   // a stray tap on the backdrop shouldn't throw away painted work
-  modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length && !ops.length) close(); });
+  modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length && !ops.length && !cropping) close(); });
 
   const strength = () => +$('[data-str]').value;
   const dirty = () => { pendingShare = null; if (!cp.disabled) { clearTimeout(cpT); cp.textContent = 'Copy'; } dl.textContent = 'Download'; $('[data-report]').textContent = ''; queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
@@ -229,6 +237,54 @@ function openBlurTool() {
   for (const [k, op] of [['rotl', { type: 'rot', dir: -1 }], ['rotr', { type: 'rot', dir: 1 }], ['flipx', { type: 'flip', axis: 'x' }], ['flipy', { type: 'flip', axis: 'y' }]])
     $(`[data-${k}]`).onclick = () => applyGeometry(op);
 
+  // Crop mode: a selection box over the (CSS-scaled) canvas, tracked by layoutCrop on resize.
+  function layoutCrop() {
+    if (!cropping) return;
+    Object.assign(ov.style, { left: cv.offsetLeft + 'px', top: cv.offsetTop + 'px', width: cv.offsetWidth + 'px', height: cv.offsetHeight + 'px' });
+    box.style.display = crop ? 'block' : 'none';
+    if (crop) Object.assign(box.style, { left: crop.x * 100 + '%', top: crop.y * 100 + '%', width: crop.w * 100 + '%', height: crop.h * 100 + '%' });
+    $('[data-cropinfo]').textContent = crop ? `${Math.round(crop.w * curW)} × ${Math.round(crop.h * curH)} px` : 'Drag on the picture to choose the area to keep.';
+  }
+  function enterCrop() {
+    if (cropping || closed || !base || drawing) return;
+    cropping = true; crop = null;
+    ov = document.createElement('div'); ov.className = 'absolute overflow-hidden pointer-events-none';
+    box = document.createElement('div'); box.className = 'absolute border-2 border-white'; box.style.boxShadow = '0 0 0 9999px rgba(0,0,0,.55)';
+    ov.appendChild(box); cv.parentNode.appendChild(ov);
+    for (const q of ['[data-crop]', '[data-rotl]', '[data-rotr]', '[data-flipx]', '[data-flipy]', '[data-undo]', '[data-clear]']) $(q).disabled = true;
+    $('[data-actions]').classList.add('hidden');
+    $('[data-croprow]').classList.replace('hidden', 'flex');
+    cv.style.cursor = 'crosshair';
+    addEventListener('resize', layoutCrop); layoutCrop();
+  }
+  function exitCrop() {
+    if (!cropping) return;
+    cropping = false; crop = cropDrag = null;
+    removeEventListener('resize', layoutCrop);
+    ov.remove(); ov = box = null;
+    for (const q of ['[data-crop]', '[data-rotl]', '[data-rotr]', '[data-flipx]', '[data-flipy]', '[data-undo]', '[data-clear]']) $(q).disabled = false;
+    $('[data-actions]').classList.remove('hidden');
+    $('[data-croprow]').classList.replace('flex', 'hidden');
+    cv.style.cursor = mode === 'brush' ? 'crosshair' : 'default';
+  }
+  function applyCrop() {
+    const r = crop && clampCrop(crop, curW, curH);
+    if (!r) { $('[data-cropinfo]').textContent = 'Crop is too small'; return; }
+    exitCrop(); applyGeometry({ type: 'crop', ...r });
+  }
+  const cropPt = (e) => {
+    const r = cv.getBoundingClientRect();
+    return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
+  };
+  const cropMove = (e) => {
+    const [x, y] = cropPt(e), [ax, ay] = cropDrag;
+    crop = { x: Math.min(ax, x), y: Math.min(ay, y), w: Math.abs(x - ax), h: Math.abs(y - ay) };
+    layoutCrop();
+  };
+  $('[data-crop]').onclick = enterCrop;
+  $('[data-cropok]').onclick = applyCrop;
+  $('[data-cropno]').onclick = exitCrop;
+
   function paintStroke(c, s, w, h, from = 0) {
     c.lineCap = c.lineJoin = 'round';
     c.strokeStyle = '#000';
@@ -310,18 +366,20 @@ function openBlurTool() {
     s.pts.push([(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]);
   }
   cv.addEventListener('pointerdown', (e) => {
+    if (cropping) { cv.setPointerCapture(e.pointerId); cropDrag = cropPt(e); crop = null; cropMove(e); return; }
     if (mode !== 'brush') return;
     drawing = true; cv.setPointerCapture(e.pointerId);
     const s = { w: $('[data-brush]').value / 100 * 0.5, fx, pts: [] };
     strokes.push(s); undoStack.push(s); addPoint(e, s); paintStroke(maskFor(fx).getContext('2d'), s, pw, ph); schedule(); dirty();
   });
   cv.addEventListener('pointermove', (e) => {
+    if (cropDrag) return cropMove(e);
     if (!drawing) return;
     const s = strokes[strokes.length - 1], from = s.pts.length;
     for (const ev of e.getCoalescedEvents?.() ?? [e]) addPoint(ev, s);
     paintStroke(maskFor(s.fx).getContext('2d'), s, pw, ph, from); schedule();
   });
-  const end = () => { if (drawing) { drawing = false; queueReadout(); } };
+  const end = () => { cropDrag = null; if (drawing) { drawing = false; queueReadout(); } };
   cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
 
   // Full-resolution render of the final composite. Intermediate canvases are released as soon as they're consumed.
