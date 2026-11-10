@@ -107,67 +107,67 @@
       <!-- Stats Grid -->
       <div id="statsGrid" class="grid grid-cols-2 gap-px bg-gray-200 dark:bg-gray-700">
         <!-- Always shown -->
-        <div data-copyid="stat-format" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div data-copyid="stat-format" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Format</p>
           <p id="stat-format" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
         </div>
-        <div data-copyid="stat-size" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div data-copyid="stat-size" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">File Size</p>
           <p id="stat-size" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
           <p id="stat-size-sub" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
-        <div data-copyid="stat-resolution" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div data-copyid="stat-resolution" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Resolution</p>
           <p id="stat-resolution" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
         </div>
-        <div data-copyid="stat-aspect" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div data-copyid="stat-aspect" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Aspect Ratio</p>
           <p id="stat-aspect" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
         </div>
 
         <!-- Image-only -->
-        <div id="cell-pixels" data-copyid="stat-pixels" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div id="cell-pixels" data-copyid="stat-pixels" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Megapixels</p>
           <p id="stat-pixels" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
           <p id="stat-pixels-sub" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
-        <div id="cell-dpi" data-copyid="stat-dpi" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div id="cell-dpi" data-copyid="stat-dpi" class="relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">DPI (from metadata)</p>
           <p id="stat-dpi" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
           <p id="stat-dpi-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
 
         <!-- Image-only (PNG + JPEG) -->
-        <div id="cell-bitdepth" data-copyid="stat-bitdepth" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div id="cell-bitdepth" data-copyid="stat-bitdepth" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Bit Depth</p>
           <p id="stat-bitdepth" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
           <p id="stat-bitdepth-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
 
         <!-- JPEG-only -->
-        <div id="cell-quality" data-copyid="stat-quality" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div id="cell-quality" data-copyid="stat-quality" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">JPEG Quality</p>
           <p id="stat-quality" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
           <p id="stat-quality-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
 
         <!-- EXIF orientation (JPEG only, when present) -->
-        <div id="cell-orientation" data-copyid="stat-orientation" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div id="cell-orientation" data-copyid="stat-orientation" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Orientation</p>
           <p id="stat-orientation" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
           <p id="stat-orientation-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
         </div>
 
         <!-- Video-only (hidden by default) -->
-        <div id="cell-duration" data-copyid="stat-duration" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div id="cell-duration" data-copyid="stat-duration" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Duration</p>
           <p id="stat-duration" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
         </div>
-        <div id="cell-bitrate" data-copyid="stat-bitrate" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div id="cell-bitrate" data-copyid="stat-bitrate" class="hidden relative bg-white dark:bg-gray-800 p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Bitrate (est.)</p>
           <p id="stat-bitrate" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
         </div>
-        <div id="cell-fps" data-copyid="stat-fps" class="hidden relative bg-white dark:bg-gray-800 p-4 col-span-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+        <div id="cell-fps" data-copyid="stat-fps" class="hidden relative bg-white dark:bg-gray-800 p-4 col-span-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
           <p class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 font-semibold mb-1">Frame Rate</p>
           <p id="stat-fps" class="text-lg font-semibold text-gray-800 dark:text-gray-100">—</p>
           <p id="stat-fps-note" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 hidden"></p>
