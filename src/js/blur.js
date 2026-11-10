@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { blurCanvas } from './blur-engine.js';
 import { EFFECTS, effectLayer, setBlurImpl } from './effects.js';
 import { findQualityForTarget } from './output.js';
+import { describeMetadata } from './metadata-report.js';
 import { formatBytes } from './util.js';
 import { extractExifSegment, sanitizeExifSegment, injectExifSegment } from './parsers/jpeg-exif.js';
 
@@ -84,6 +85,7 @@ function openBlurTool() {
           <button data-copy class="hidden px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-60 transition-colors">Copy</button>
           <button data-dl class="flex-1 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white transition-colors">Download</button>
         </div>
+        <p data-report class="text-[11px] text-gray-400 dark:text-gray-500"></p>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -114,7 +116,8 @@ function openBlurTool() {
   modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length) close(); });
 
   const strength = () => +$('[data-str]').value;
-  const dirty = () => { pendingShare = null; if (!cp.disabled) { clearTimeout(cpT); cp.textContent = 'Copy'; } dl.textContent = 'Download'; queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
+  const dirty = () => { pendingShare = null; if (!cp.disabled) { clearTimeout(cpT); cp.textContent = 'Copy'; } dl.textContent = 'Download'; $('[data-report]').textContent = ''; queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
+  const report = (kept) => { if (!closed) $('[data-report]').textContent = describeMetadata(state.currentExifRows, kept); };
   const strip = () => $('[data-strip]').checked;
   const fromJpeg = state.currentMime === 'image/jpeg';
   let sizeNote = '', dropped = false;
@@ -356,9 +359,9 @@ function openBlurTool() {
     dl.disabled = true; dl.textContent = 'Processing…';
     await new Promise(r => setTimeout(r, 30)); // let the label paint before the heavy work
     try {
-      const type = outType, { blob, reached } = await exportBlob();
+      const type = outType, { blob, kept, reached } = await exportBlob();
       if (!blob) throw new Error('empty');
-      if (!closed) showSize(blob, reached);
+      if (!closed) { showSize(blob, reached); report(kept); }
       await deliver(new File([blob], `${origName}-blurred.${EXT[type]}`, { type }));
     } catch {
       alert('Could not export the image. It may be too large for this device.');
@@ -387,6 +390,7 @@ function openBlurTool() {
       catch { ok = false; }
       if (closed) return;
       cp.disabled = false; cp.textContent = ok ? 'Copied' : 'Copy failed';
+      if (ok) report(false);
       cpT = setTimeout(() => { cp.textContent = 'Copy'; }, 1500);
     };
   }
