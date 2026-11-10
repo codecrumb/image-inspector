@@ -22,3 +22,24 @@ Plan: ~/.claude/plans/jiggly-imagining-comet.md (branch: feat/blur-download)
 - `npm test`: 23 pass. E2E in Playwright Chromium and WebKit iPhone 13 profile over `dist/`: blur/pixelate/solid x strip on/off on a JPEG with GPS+camera EXIF (kept output has EXIF, no thumbnail, orientation reset), PNG and WebP output (WebKit has no WebP encode, option hidden), 150 KB target size, Copy (PNG on clipboard, report "Removed"), report text in each state, fail-closed (corrupt IFD1 -> no camera/GPS EXIF, note says removed), note reset on JPEG -> PNG, transparent PNG as JPEG has white corner, 5000x3800 on touch exported at 3072x2335, size readout hidden after a change and shown after Download.
 - Fixed after e2e: pixelate grid is now scale-invariant (`pixelCells`; parity mean diff 0.49/255 at 3200 px, blur 0.27); no-EXIF JPEG with strip off now says there is nothing to keep, and the report ignores structural rows (JFIF Version, Encoding, YCbCr Subsampling) so it reads "No metadata found". Safari's JPEG encoder still writes its own tiny EXIF stub (no camera/GPS). `npm test`: 25 pass. Final-review fixes: Blur snapshots its source (buffer, mime, rows, size) and queueFiles ignores input while the dialog is open; readout skips mid-stroke and never overlaps Download/Copy; sanitizeExifSegment fails closed when IFD1 has no JPEG thumbnail pointer.
 - NOT tested on a real device: iOS share sheet save, Safari clipboard (Copy), Safari WebP, touch memory limits with the 3072 cap.
+
+# Workbench phase 2 (geometry: rotate, flip, crop, resize)
+
+## Review
+- `npm test`: 35 pass; `npm run build` clean. Scripts in the session scratchpad (`p2.mjs`, reused `t7e2e/e2e.mjs`), run against `dist/` in Playwright Chromium and the WebKit iPhone 13 profile. 33/33 geometry checks pass in each browser; the phase 1 suite passes in both (22 Chromium, 24 WebKit).
+
+| Check | Chromium | WebKit iPhone |
+|---|---|---|
+| Rotate left/right, flip x/y: output size and blue/red marker positions correct; undo restores preview exactly; 4x rotate right = identity | pass | pass |
+| Crop 800x400 to 400x200, marker at expected spot | pass | pass |
+| Resize after crop (200 wide gives 200x100, marker scaled); chips: aria-labels, aria-pressed follows input, Original clears input; non-finite value = no resize | pass | pass |
+| Combined: rotate right, Solid stroke over red marker, crop, Pixelate stroke over a checker, resize 100, JPEG: 100x200, black at the mapped marker spot, unstroked red intact, checker smoothed | pass | pass |
+| Mixed undo (stroke, rotate, crop, clear, flip) one step at a time: each preview equals the previous snapshot; full undo exports the original with no stroke | pass | pass |
+| Close dialog mid-crop, Esc during crop (cancels crop only), right after rotate/flip, right after Download: no errors, reopen is fresh | pass | pass |
+| Copy after rotate + resize: clipboard PNG is 200x400 (desktop only); width readout shows derived height after rotate | pass | readout pass, Copy not testable |
+| 5000x3800 + rotate: 3113x4096 desktop, 2335x3072 touch (cap respected); + resize 1000 gives 1000x1316 | pass | pass |
+| Preview vs export mean difference after rotate+crop on 3200x2400: blur 0.34, pixelate 0.56 (desktop); blur 0.12, pixelate 0.41 (touch) (limit 1.5) | pass | pass |
+| Phase 1 flows (strip on/off with GPS JPEG, PNG/WebP, target size, report text, parity) | pass | pass |
+
+- Fixed in this task (Task 4 review): width chips have aria-labels, `aria-pressed` and an active style tracking the width; `setRw` ignores non-finite input; `renderFinal` sizes the resize from the dimensions it just rendered.
+- NOT tested on a real device: touch crop (real finger drags, pinch/second finger; tests use synthesized pointer events), iOS share sheet save, Safari clipboard (Copy), touch memory limits with the 3072 cap and a replayed op chain. "Copy dimensions" was read as the Copy button / width readout; there is no separate copy-dimensions control.
