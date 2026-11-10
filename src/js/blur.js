@@ -23,7 +23,8 @@ function openBlurTool() {
   if (!src || document.getElementById('blurModal')) return;
   const origName = (state.imageQueue[state.queueIndex]?.file.name || 'image').replace(/\.[^.]+$/, '');
   const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-  let outType = EXT[state.currentMime] ? state.currentMime : 'image/png';
+  const webpOk = document.createElement('canvas').toDataURL('image/webp').startsWith('data:image/webp'); // Safari falls back to PNG
+  let outType = EXT[state.currentMime] && (webpOk || state.currentMime !== 'image/webp') ? state.currentMime : 'image/png';
 
   const modal = document.createElement('div');
   modal.id = 'blurModal';
@@ -110,7 +111,7 @@ function openBlurTool() {
   modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length) close(); });
 
   const strength = () => +$('[data-str]').value;
-  const dirty = () => { pendingShare = null; dl.textContent = 'Download'; queueReadout(); };
+  const dirty = () => { pendingShare = null; dl.textContent = 'Download'; queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
   const strip = () => $('[data-strip]').checked;
   const fromJpeg = state.currentMime === 'image/jpeg';
   let sizeNote = '', dropped = false;
@@ -121,16 +122,17 @@ function openBlurTool() {
       : 'Only JPEG can keep metadata; this file will still be stripped.';
     $('[data-note]').textContent = msg + sizeNote;
   }
-  $('[data-strip]').onchange = () => { renderNote(); dirty(); };
+  $('[data-strip]').onchange = () => { dropped = false; renderNote(); dirty(); };
   renderNote();
 
   const targetKB = () => { const v = parseFloat($('[data-target]').value); return v > 0 ? v : 0; };
+  if (!webpOk) $('[data-fmt] option[value="image/webp"]').remove();
   $('[data-fmt]').value = outType;
   function syncOutput() {
     const png = outType === 'image/png';
     $('[data-q]').disabled = png; $('[data-target]').disabled = png;
     $('[data-qv]').textContent = png ? '—' : $('[data-q]').value;
-    renderNote(); dirty();
+    dropped = false; renderNote(); dirty();
   }
   $('[data-fmt]').onchange = (e) => { outType = e.target.value; syncOutput(); };
   $('[data-q]').oninput = $('[data-target]').oninput = syncOutput;
@@ -308,6 +310,10 @@ function openBlurTool() {
   async function exportBlob() {
     const type = outType, canvas = await renderFinal();
     try {
+      if (type === 'image/jpeg') { // JPEG has no alpha; transparent areas would turn black
+        const g = canvas.getContext('2d');
+        g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height);
+      }
       let q = +$('[data-q]').value / 100, reached = true;
       const kb = targetKB();
       if (kb && type !== 'image/png') {
