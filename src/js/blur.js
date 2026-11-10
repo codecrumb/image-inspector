@@ -127,7 +127,7 @@ function openBlurTool() {
   };
   const onKey = (e) => {
     if (e.key === 'Escape') { if (cropping) exitCrop(); else close(); }
-    else if (cropping) { if (e.key === 'Enter') { e.preventDefault(); applyCrop(); } }
+    else if (cropping) { if (e.key === 'Enter' && !e.target.closest?.('input,button,select,textarea')) { e.preventDefault(); applyCrop(); } }
     else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && (mode === 'brush' || undoStack[undoStack.length - 1]?.geom)) { e.preventDefault(); undo(); }
   };
   document.addEventListener('keydown', onKey);
@@ -277,7 +277,7 @@ function openBlurTool() {
     return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
   };
   const cropMove = (e) => {
-    const [x, y] = cropPt(e), [ax, ay] = cropDrag;
+    const [x, y] = cropPt(e), { ax, ay } = cropDrag;
     crop = { x: Math.min(ax, x), y: Math.min(ay, y), w: Math.abs(x - ax), h: Math.abs(y - ay) };
     layoutCrop();
   };
@@ -366,20 +366,23 @@ function openBlurTool() {
     s.pts.push([(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]);
   }
   cv.addEventListener('pointerdown', (e) => {
-    if (cropping) { cv.setPointerCapture(e.pointerId); cropDrag = cropPt(e); crop = null; cropMove(e); return; }
+    if (cropping) {
+      if (cropDrag) return;
+      cv.setPointerCapture(e.pointerId); const [ax, ay] = cropPt(e); cropDrag = { id: e.pointerId, ax, ay }; crop = null; cropMove(e); return;
+    }
     if (mode !== 'brush') return;
     drawing = true; cv.setPointerCapture(e.pointerId);
     const s = { w: $('[data-brush]').value / 100 * 0.5, fx, pts: [] };
     strokes.push(s); undoStack.push(s); addPoint(e, s); paintStroke(maskFor(fx).getContext('2d'), s, pw, ph); schedule(); dirty();
   });
   cv.addEventListener('pointermove', (e) => {
-    if (cropDrag) return cropMove(e);
+    if (cropDrag) { if (e.pointerId === cropDrag.id) cropMove(e); return; }
     if (!drawing) return;
     const s = strokes[strokes.length - 1], from = s.pts.length;
-    for (const ev of e.getCoalescedEvents?.() ?? [e]) addPoint(ev, s);
+    const l = e.getCoalescedEvents?.(); for (const ev of l?.length ? l : [e]) addPoint(ev, s);
     paintStroke(maskFor(s.fx).getContext('2d'), s, pw, ph, from); schedule();
   });
-  const end = () => { cropDrag = null; if (drawing) { drawing = false; queueReadout(); } };
+  const end = (e) => { if (cropDrag) { if (e.pointerId === cropDrag.id) cropDrag = null; return; } if (drawing) { drawing = false; queueReadout(); } };
   cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
 
   // Full-resolution render of the final composite. Intermediate canvases are released as soon as they're consumed.
