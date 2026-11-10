@@ -4,6 +4,7 @@ import { EFFECTS, effectLayer, setBlurImpl } from './effects.js';
 import { findQualityForTarget } from './output.js';
 import { describeMetadata } from './metadata-report.js';
 import { formatBytes } from './util.js';
+import { opDims, transformStrokes, applyOp } from './geometry.js';
 import { extractExifSegment, sanitizeExifSegment, injectExifSegment } from './parsers/jpeg-exif.js';
 
 setBlurImpl(blurCanvas);
@@ -48,6 +49,13 @@ function openBlurTool() {
         </div>
         <div class="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 text-sm">
           ${EFFECTS.map(f => `<button data-fx="${f}" class="flex-1 py-1.5 font-medium">${FX_LABEL[f]}</button>`).join('')}
+        </div>
+        <div class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+          <span class="w-16">Transform</span>
+          <div class="flex gap-1.5 text-base leading-none">
+            ${[['rotl', '↺', 'Rotate left'], ['rotr', '↻', 'Rotate right'], ['flipx', '⇆', 'Mirror'], ['flipy', '⇅', 'Flip vertically']].map(([k, g, t]) =>
+              `<button data-${k} title="${t}" aria-label="${t}" class="w-9 py-1.5 rounded border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">${g}</button>`).join('')}
+          </div>
         </div>
         <label data-strrow class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
           <span class="w-16">Strength</span>
@@ -94,10 +102,12 @@ function openBlurTool() {
   const $ = (q) => modal.querySelector(q);
   const cv = $('[data-cv]'), ctx = cv.getContext('2d'), dl = $('[data-dl]'), cp = $('[data-copy]');
   let img, base, scratch, pw = 0, ph = 0;
+  const ops = []; // geometry applied in order: rotate / flip (crop, resize later)
+  let curW = 0, curH = 0, capW = 0, capH = 0, capped = false; // full-resolution size after ops (EXPORT_MAX cap applied first)
   const layers = {}, masks = {}; // per-effect preview layer and stroke mask, built lazily
   let mode = 'all', fx = 'blur', drawing = false, raf = 0, strT = 0;
   const strokes = []; // { w: brush width as a fraction of the long side, fx, pts: [[nx, ny], ...] }
-  const undoStack = []; // each entry: a painted stroke, or { cleared: [...strokes] } so Clear can be undone too
+  const undoStack = []; // each entry: a painted stroke, { cleared: [...strokes] } so Clear can be undone too, or { geom, op, before: strokes }
   let pendingShare = null, closed = false, roT = 0, roRunning = false, roAgain = false, cpT = 0;
 
   const close = () => {
@@ -110,12 +120,12 @@ function openBlurTool() {
   };
   const onKey = (e) => {
     if (e.key === 'Escape') close();
-    else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && mode === 'brush') { e.preventDefault(); undo(); }
+    else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && (mode === 'brush' || undoStack[undoStack.length - 1]?.geom)) { e.preventDefault(); undo(); }
   };
   document.addEventListener('keydown', onKey);
   $('[data-x]').onclick = close;
   // a stray tap on the backdrop shouldn't throw away painted work
-  modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length) close(); });
+  modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length && !ops.length) close(); });
 
   const strength = () => +$('[data-str]').value;
   const dirty = () => { pendingShare = null; if (!cp.disabled) { clearTimeout(cpT); cp.textContent = 'Copy'; } dl.textContent = 'Download'; $('[data-report]').textContent = ''; queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
@@ -188,6 +198,37 @@ function openBlurTool() {
     render();
   }
 
+  // Preview image = the original at preview size run through every op.
+  function bakePreview() {
+    const k = Math.min(1, PREVIEW_MAX / Math.max(img.naturalWidth, img.naturalHeight));
+    let cur = mk(Math.round(img.naturalWidth * k), Math.round(img.naturalHeight * k));
+    cur.getContext('2d').drawImage(img, 0, 0, cur.width, cur.height);
+    for (const op of ops) { const next = applyOp(cur, op, cur.width, cur.height); release(cur); cur = next; }
+    return cur;
+  }
+  function rebuildPreview() {
+    Object.values(layers).forEach(c => release(c)); Object.values(masks).forEach(c => release(c));
+    for (const k in layers) delete layers[k];
+    for (const k in masks) delete masks[k];
+    release(base, scratch);
+    base = bakePreview(); pw = base.width; ph = base.height;
+    scratch = mk(pw, ph);
+    cv.width = pw; cv.height = ph;
+  }
+  function updateDims() {
+    [curW, curH] = [capW, capH];
+    for (const op of ops) [curW, curH] = opDims(op, curW, curH);
+    if (capped) { sizeNote = ` Large image: saved at ${curW}×${curH}.`; renderNote(); }
+  }
+  function applyGeometry(op) {
+    if (closed || !base || drawing) return;
+    undoStack.push({ geom: true, op, before: strokes.map(s => ({ ...s, pts: s.pts.map(p => [...p]) })) });
+    strokes.splice(0, strokes.length, ...transformStrokes(strokes, op, curW, curH));
+    ops.push(op); updateDims(); rebuildPreview(); repaintMask(); render(); dirty();
+  }
+  for (const [k, op] of [['rotl', { type: 'rot', dir: -1 }], ['rotr', { type: 'rot', dir: 1 }], ['flipx', { type: 'flip', axis: 'x' }], ['flipy', { type: 'flip', axis: 'y' }]])
+    $(`[data-${k}]`).onclick = () => applyGeometry(op);
+
   function paintStroke(c, s, w, h, from = 0) {
     c.lineCap = c.lineJoin = 'round';
     c.strokeStyle = '#000';
@@ -253,7 +294,8 @@ function openBlurTool() {
   function undo() {
     const last = undoStack.pop();
     if (!last) return;
-    if (last.cleared) strokes.push(...last.cleared); else strokes.pop();
+    if (last.geom) { ops.pop(); strokes.splice(0, strokes.length, ...last.before); updateDims(); rebuildPreview(); }
+    else if (last.cleared) strokes.push(...last.cleared); else strokes.pop();
     repaintMask(); render(); dirty();
   }
   $('[data-undo]').onclick = undo;
@@ -285,9 +327,10 @@ function openBlurTool() {
   // Full-resolution render of the final composite. Intermediate canvases are released as soon as they're consumed.
   async function renderFinal() {
     const k = Math.min(1, EXPORT_MAX / Math.max(img.naturalWidth, img.naturalHeight));
-    const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
-    const orig = mk(w, h);
+    let w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+    let orig = mk(w, h);
     orig.getContext('2d').drawImage(img, 0, 0, w, h);
+    for (const op of ops) { const next = applyOp(orig, op, w, h); [w, h] = opDims(op, w, h); release(orig); orig = next; }
     let out;
     if (mode === 'brush') {
       out = mk(w, h);
@@ -413,17 +456,9 @@ function openBlurTool() {
   img = new Image();
   img.onload = () => {
     if (closed) return;
-    const long = Math.max(img.naturalWidth, img.naturalHeight);
-    const k = Math.min(1, PREVIEW_MAX / long);
-    pw = Math.round(img.naturalWidth * k); ph = Math.round(img.naturalHeight * k);
-    base = mk(pw, ph); base.getContext('2d').drawImage(img, 0, 0, pw, ph);
-    scratch = mk(pw, ph);
-    cv.width = pw; cv.height = ph;
-    if (long > EXPORT_MAX) {
-      const e = EXPORT_MAX / long;
-      sizeNote = ` Large image: saved at ${Math.round(img.naturalWidth * e)}×${Math.round(img.naturalHeight * e)}.`;
-      renderNote();
-    }
+    const long = Math.max(img.naturalWidth, img.naturalHeight), e = Math.min(1, EXPORT_MAX / long);
+    capW = Math.round(img.naturalWidth * e); capH = Math.round(img.naturalHeight * e); capped = long > EXPORT_MAX;
+    updateDims(); rebuildPreview();
     render();
     queueReadout();
   };
