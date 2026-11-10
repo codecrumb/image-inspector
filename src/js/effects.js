@@ -13,7 +13,10 @@ const mk = (w, h) => Object.assign(document.createElement('canvas'), { width: w,
 // Returns a new canvas the size of `src` with the effect applied. Caller releases it.
 export function effectLayer(fx, src, strength) {
   const w = src.width, h = src.height;
-  if (fx === 'blur') return blurImpl(src, strength / 100 * Math.max(w, h) * 0.03);
+  if (fx === 'blur') {
+    if (!blurImpl) throw new Error('effects: setBlurImpl() was not called');
+    return blurImpl(src, strength / 100 * Math.max(w, h) * 0.03);
+  }
   const out = mk(w, h), ctx = out.getContext('2d');
   if (fx === 'solid') {
     ctx.fillStyle = '#000';
@@ -24,5 +27,6 @@ export function effectLayer(fx, src, strength) {
   small.getContext('2d').drawImage(src, 0, 0, small.width, small.height);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(small, 0, 0, small.width * b, small.height * b);
+  small.width = small.height = 0;
   return out;
 }

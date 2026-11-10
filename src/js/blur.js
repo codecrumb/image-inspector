@@ -1,5 +1,9 @@
 import { state } from './state.js';
 import { blurCanvas } from './blur-engine.js';
+import { EFFECTS, effectLayer, setBlurImpl } from './effects.js';
+
+setBlurImpl(blurCanvas);
+const FX_LABEL = { blur: 'Blur', pixelate: 'Pixelate', solid: 'Solid' };
 
 // ── Blur & Download (built lazily on first use) ───────────────────────────
 // The preview runs on a downscaled copy; strokes are stored in normalized coordinates and replayed
@@ -7,7 +11,6 @@ import { blurCanvas } from './blur-engine.js';
 const isTouch = matchMedia('(pointer: coarse)').matches;
 const PREVIEW_MAX = 1600;
 const EXPORT_MAX = isTouch ? 3072 : 4096; // phones run out of canvas memory above this
-const SIGMA_AT_FULL_STRENGTH = 0.03;      // fraction of the long side
 
 const mk = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
 const release = (...cs) => cs.forEach(c => { if (c) c.width = c.height = 0; });
@@ -36,7 +39,10 @@ function openBlurTool() {
           <button data-mode="all" class="flex-1 py-1.5 font-medium">Whole image</button>
           <button data-mode="brush" class="flex-1 py-1.5 font-medium">Paint areas</button>
         </div>
-        <label class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+        <div class="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 text-sm">
+          ${EFFECTS.map(f => `<button data-fx="${f}" class="flex-1 py-1.5 font-medium">${FX_LABEL[f]}</button>`).join('')}
+        </div>
+        <label data-strrow class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
           <span class="w-16">Strength</span>
           <input data-str type="range" min="1" max="100" value="40" class="flex-1 accent-indigo-500" />
         </label>
@@ -55,16 +61,18 @@ function openBlurTool() {
   document.body.appendChild(modal);
   const $ = (q) => modal.querySelector(q);
   const cv = $('[data-cv]'), ctx = cv.getContext('2d'), dl = $('[data-dl]');
-  let img, base, blurred, mask, mctx, scratch, pw = 0, ph = 0;
-  let mode = 'all', drawing = false, raf = 0, strT = 0;
-  const strokes = []; // { w: brush width as a fraction of the long side, pts: [[nx, ny], ...] }
+  let img, base, scratch, pw = 0, ph = 0;
+  const layers = {}, masks = {}; // per-effect preview layer and stroke mask, built lazily
+  let mode = 'all', fx = 'blur', drawing = false, raf = 0, strT = 0;
+  const strokes = []; // { w: brush width as a fraction of the long side, fx, pts: [[nx, ny], ...] }
   const undoStack = []; // each entry: a painted stroke, or { cleared: [...strokes] } so Clear can be undone too
   let pendingShare = null;
 
   const close = () => {
     cancelAnimationFrame(raf); clearTimeout(strT);
     document.removeEventListener('keydown', onKey);
-    release(base, blurred, mask, scratch, cv);
+    Object.values(layers).forEach(c => release(c)); Object.values(masks).forEach(c => release(c));
+    release(base, scratch, cv);
     modal.remove();
   };
   const onKey = (e) => {
@@ -76,12 +84,14 @@ function openBlurTool() {
   // a stray tap on the backdrop shouldn't throw away painted work
   modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length) close(); });
 
-  const sigmaFor = (w, h) => $('[data-str]').value / 100 * Math.max(w, h) * SIGMA_AT_FULL_STRENGTH;
+  const strength = () => +$('[data-str]').value;
   const dirty = () => { pendingShare = null; dl.textContent = 'Download'; };
 
-  function makeBlur() {
-    release(blurred);
-    blurred = blurCanvas(base, sigmaFor(pw, ph));
+  const layerFor = (f) => layers[f] ||= effectLayer(f, base, strength());
+  const maskFor = (f) => masks[f] ||= mk(pw, ph);
+  function resetLayers() {
+    Object.values(layers).forEach(c => release(c));
+    for (const k in layers) delete layers[k];
     render();
   }
 
@@ -95,22 +105,24 @@ function openBlurTool() {
     }
   }
   function repaintMask() {
-    mctx.clearRect(0, 0, pw, ph);
-    strokes.forEach(s => paintStroke(mctx, s, pw, ph));
+    Object.values(masks).forEach(m => m.getContext('2d').clearRect(0, 0, pw, ph));
+    strokes.forEach(s => paintStroke(maskFor(s.fx).getContext('2d'), s, pw, ph));
   }
 
   function render() {
     ctx.clearRect(0, 0, pw, ph);
-    if (mode === 'all') { ctx.drawImage(blurred, 0, 0); return; }
+    if (mode === 'all') { ctx.drawImage(layerFor(fx), 0, 0); return; }
     ctx.drawImage(base, 0, 0);
-    if (!strokes.length) return;
     const sc = scratch.getContext('2d');
-    sc.globalCompositeOperation = 'source-over';
-    sc.clearRect(0, 0, pw, ph);
-    sc.drawImage(blurred, 0, 0);
-    sc.globalCompositeOperation = 'destination-in';
-    sc.drawImage(mask, 0, 0);
-    ctx.drawImage(scratch, 0, 0);
+    for (const f of EFFECTS) {
+      if (!strokes.some(s => s.fx === f)) continue;
+      sc.globalCompositeOperation = 'source-over';
+      sc.clearRect(0, 0, pw, ph);
+      sc.drawImage(layerFor(f), 0, 0);
+      sc.globalCompositeOperation = 'destination-in';
+      sc.drawImage(maskFor(f), 0, 0);
+      ctx.drawImage(scratch, 0, 0);
+    }
   }
   const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); };
 
@@ -130,7 +142,21 @@ function openBlurTool() {
   modal.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
   setMode('all');
 
-  $('[data-str]').oninput = () => { dirty(); clearTimeout(strT); strT = setTimeout(makeBlur, 60); };
+  function setFx(f) {
+    fx = f;
+    modal.querySelectorAll('[data-fx]').forEach(b => {
+      const on = b.dataset.fx === f;
+      b.className = 'flex-1 py-1.5 font-medium ' + (on ? 'bg-indigo-600 text-white' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700');
+    });
+    $('[data-strrow]').classList.toggle('hidden', f === 'solid');
+    $('[data-strrow]').classList.toggle('flex', f !== 'solid');
+    dirty();
+    if (base) render();
+  }
+  modal.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => setFx(b.dataset.fx));
+  setFx('blur');
+
+  $('[data-str]').oninput = () => { dirty(); clearTimeout(strT); strT = setTimeout(resetLayers, 60); };
   function undo() {
     const last = undoStack.pop();
     if (!last) return;
@@ -151,14 +177,14 @@ function openBlurTool() {
   cv.addEventListener('pointerdown', (e) => {
     if (mode !== 'brush') return;
     drawing = true; cv.setPointerCapture(e.pointerId);
-    const s = { w: $('[data-brush]').value / 100 * 0.5, pts: [] };
-    strokes.push(s); undoStack.push(s); addPoint(e, s); paintStroke(mctx, s, pw, ph); schedule(); dirty();
+    const s = { w: $('[data-brush]').value / 100 * 0.5, fx, pts: [] };
+    strokes.push(s); undoStack.push(s); addPoint(e, s); paintStroke(maskFor(fx).getContext('2d'), s, pw, ph); schedule(); dirty();
   });
   cv.addEventListener('pointermove', (e) => {
     if (!drawing) return;
     const s = strokes[strokes.length - 1], from = s.pts.length;
     for (const ev of e.getCoalescedEvents?.() ?? [e]) addPoint(ev, s);
-    paintStroke(mctx, s, pw, ph, from); schedule();
+    paintStroke(maskFor(s.fx).getContext('2d'), s, pw, ph, from); schedule();
   });
   const end = () => { drawing = false; };
   cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
@@ -169,19 +195,26 @@ function openBlurTool() {
     const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
     const orig = mk(w, h);
     orig.getContext('2d').drawImage(img, 0, 0, w, h);
-    const soft = blurCanvas(orig, sigmaFor(w, h));
-    let out = soft;
+    let out;
     if (mode === 'brush') {
-      const m = mk(w, h), mc = m.getContext('2d');
-      strokes.forEach(s => paintStroke(mc, s, w, h));
-      const sc = soft.getContext('2d');
-      sc.globalCompositeOperation = 'destination-in';
-      sc.drawImage(m, 0, 0);
-      release(m);
-      orig.getContext('2d').drawImage(soft, 0, 0);
-      release(soft);
-      out = orig;
+      out = mk(w, h);
+      const oc = out.getContext('2d');
+      oc.drawImage(orig, 0, 0);
+      for (const f of EFFECTS) {
+        const mine = strokes.filter(s => s.fx === f);
+        if (!mine.length) continue;
+        const m = mk(w, h), mc = m.getContext('2d');
+        mine.forEach(s => paintStroke(mc, s, w, h));
+        const layer = effectLayer(f, orig, strength());
+        layer.getContext('2d').globalCompositeOperation = 'destination-in';
+        layer.getContext('2d').drawImage(m, 0, 0);
+        release(m);
+        oc.drawImage(layer, 0, 0);
+        release(layer);
+      }
+      release(orig);
     } else {
+      out = effectLayer(fx, orig, strength());
       release(orig);
     }
     const blob = await new Promise(r => out.toBlob(r, outType, 0.92));
@@ -234,14 +267,13 @@ function openBlurTool() {
     const k = Math.min(1, PREVIEW_MAX / long);
     pw = Math.round(img.naturalWidth * k); ph = Math.round(img.naturalHeight * k);
     base = mk(pw, ph); base.getContext('2d').drawImage(img, 0, 0, pw, ph);
-    mask = mk(pw, ph); mctx = mask.getContext('2d');
     scratch = mk(pw, ph);
     cv.width = pw; cv.height = ph;
     if (long > EXPORT_MAX) {
       const e = EXPORT_MAX / long;
       $('[data-note]').textContent += ` Large image: saved at ${Math.round(img.naturalWidth * e)}×${Math.round(img.naturalHeight * e)}.`;
     }
-    makeBlur();
+    render();
   };
   img.onerror = () => { close(); alert('Could not load image.'); };
   img.src = src;
