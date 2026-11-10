@@ -80,22 +80,25 @@ function openBlurTool() {
         </label>
         <p data-size class="hidden text-xs text-gray-600 dark:text-gray-300"></p>
         <p data-note class="text-[11px] text-gray-400 dark:text-gray-500"></p>
-        <button data-dl class="w-full py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white transition-colors">Download</button>
+        <div class="flex gap-2">
+          <button data-copy class="hidden px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-60 transition-colors">Copy</button>
+          <button data-dl class="flex-1 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white transition-colors">Download</button>
+        </div>
       </div>
     </div>`;
   document.body.appendChild(modal);
   const $ = (q) => modal.querySelector(q);
-  const cv = $('[data-cv]'), ctx = cv.getContext('2d'), dl = $('[data-dl]');
+  const cv = $('[data-cv]'), ctx = cv.getContext('2d'), dl = $('[data-dl]'), cp = $('[data-copy]');
   let img, base, scratch, pw = 0, ph = 0;
   const layers = {}, masks = {}; // per-effect preview layer and stroke mask, built lazily
   let mode = 'all', fx = 'blur', drawing = false, raf = 0, strT = 0;
   const strokes = []; // { w: brush width as a fraction of the long side, fx, pts: [[nx, ny], ...] }
   const undoStack = []; // each entry: a painted stroke, or { cleared: [...strokes] } so Clear can be undone too
-  let pendingShare = null, closed = false, roT = 0, roRunning = false, roAgain = false;
+  let pendingShare = null, closed = false, roT = 0, roRunning = false, roAgain = false, cpT = 0;
 
   const close = () => {
     closed = true;
-    cancelAnimationFrame(raf); clearTimeout(strT); clearTimeout(roT);
+    cancelAnimationFrame(raf); clearTimeout(strT); clearTimeout(roT); clearTimeout(cpT);
     document.removeEventListener('keydown', onKey);
     Object.values(layers).forEach(c => release(c)); Object.values(masks).forEach(c => release(c));
     release(base, scratch, cv);
@@ -111,7 +114,7 @@ function openBlurTool() {
   modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length) close(); });
 
   const strength = () => +$('[data-str]').value;
-  const dirty = () => { pendingShare = null; dl.textContent = 'Download'; queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
+  const dirty = () => { pendingShare = null; if (!cp.disabled) { clearTimeout(cpT); cp.textContent = 'Copy'; } dl.textContent = 'Download'; queueReadout(); if (isTouch) $('[data-size]').classList.add('hidden'); };
   const strip = () => $('[data-strip]').checked;
   const fromJpeg = state.currentMime === 'image/jpeg';
   let sizeNote = '', dropped = false;
@@ -364,6 +367,29 @@ function openBlurTool() {
       if (!pendingShare) dl.textContent = 'Download';
     }
   };
+
+  // Clipboard only reliably takes PNG, so Copy ignores the chosen format, metadata and target size.
+  async function pngBlob() {
+    const canvas = await renderFinal();
+    try {
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+      if (!blob) throw new Error('empty');
+      return blob;
+    } finally { release(canvas); }
+  }
+  if (window.isSecureContext && location.protocol !== 'file:' && typeof ClipboardItem !== 'undefined') {
+    cp.classList.remove('hidden');
+    cp.onclick = async () => {
+      if (cp.disabled) return;
+      clearTimeout(cpT); cp.disabled = true; cp.textContent = 'Copying…';
+      let ok = true;
+      try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob() })]); } // promise keeps Safari's user gesture
+      catch { ok = false; }
+      if (closed) return;
+      cp.disabled = false; cp.textContent = ok ? 'Copied' : 'Copy failed';
+      cpT = setTimeout(() => { cp.textContent = 'Copy'; }, 1500);
+    };
+  }
 
   img = new Image();
   img.onload = () => {
