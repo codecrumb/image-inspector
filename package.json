@@ -2,7 +2,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --serve",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --test tests/"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.2",
