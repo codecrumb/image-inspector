@@ -1,6 +1,8 @@
 import { state } from './state.js';
 import { blurCanvas } from './blur-engine.js';
 import { EFFECTS, effectLayer, setBlurImpl } from './effects.js';
+import { findQualityForTarget } from './output.js';
+import { formatBytes } from './util.js';
 import { extractExifSegment, sanitizeExifSegment, injectExifSegment } from './parsers/jpeg-exif.js';
 
 setBlurImpl(blurCanvas);
@@ -20,8 +22,8 @@ function openBlurTool() {
   const src = document.getElementById('preview')._prevURL;
   if (!src || document.getElementById('blurModal')) return;
   const origName = (state.imageQueue[state.queueIndex]?.file.name || 'image').replace(/\.[^.]+$/, '');
-  const outType = /^image\/(jpeg|png|webp)$/.test(state.currentMime) ? state.currentMime : 'image/png';
-  const outExt = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[outType];
+  const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+  let outType = EXT[state.currentMime] ? state.currentMime : 'image/png';
 
   const modal = document.createElement('div');
   modal.id = 'blurModal';
@@ -59,6 +61,23 @@ function openBlurTool() {
           <input data-strip type="checkbox" checked class="accent-indigo-500" />
           <span>Remove metadata (EXIF, GPS)</span>
         </label>
+        <div class="grid grid-cols-2 gap-3 text-xs text-gray-500 dark:text-gray-400">
+          <label class="flex items-center gap-2">
+            <span>Format</span>
+            <select data-fmt class="flex-1 min-w-0 rounded border border-gray-200 dark:border-gray-600 bg-transparent px-1 py-1">
+              <option value="image/jpeg">JPEG</option><option value="image/png">PNG</option><option value="image/webp">WebP</option>
+            </select>
+          </label>
+          <label class="flex items-center gap-2">
+            <span class="whitespace-nowrap">Target size</span>
+            <input data-target type="number" min="1" step="1" placeholder="KB" class="flex-1 min-w-0 rounded border border-gray-200 dark:border-gray-600 bg-transparent px-1 py-1 disabled:opacity-40" />
+          </label>
+        </div>
+        <label class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+          <span class="w-16">Quality <span data-qv>92</span></span>
+          <input data-q type="range" min="30" max="95" value="92" class="flex-1 accent-indigo-500 disabled:opacity-40" />
+        </label>
+        <p data-size class="hidden text-xs text-gray-600 dark:text-gray-300"></p>
         <p data-note class="text-[11px] text-gray-400 dark:text-gray-500"></p>
         <button data-dl class="w-full py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white transition-colors">Download</button>
       </div>
@@ -71,10 +90,11 @@ function openBlurTool() {
   let mode = 'all', fx = 'blur', drawing = false, raf = 0, strT = 0;
   const strokes = []; // { w: brush width as a fraction of the long side, fx, pts: [[nx, ny], ...] }
   const undoStack = []; // each entry: a painted stroke, or { cleared: [...strokes] } so Clear can be undone too
-  let pendingShare = null;
+  let pendingShare = null, closed = false, roT = 0, roRunning = false, roAgain = false;
 
   const close = () => {
-    cancelAnimationFrame(raf); clearTimeout(strT);
+    closed = true;
+    cancelAnimationFrame(raf); clearTimeout(strT); clearTimeout(roT);
     document.removeEventListener('keydown', onKey);
     Object.values(layers).forEach(c => release(c)); Object.values(masks).forEach(c => release(c));
     release(base, scratch, cv);
@@ -90,7 +110,7 @@ function openBlurTool() {
   modal.addEventListener('pointerdown', (e) => { if (e.target === modal && !strokes.length) close(); });
 
   const strength = () => +$('[data-str]').value;
-  const dirty = () => { pendingShare = null; dl.textContent = 'Download'; };
+  const dirty = () => { pendingShare = null; dl.textContent = 'Download'; queueReadout(); };
   const strip = () => $('[data-strip]').checked;
   const fromJpeg = state.currentMime === 'image/jpeg';
   let sizeNote = '', dropped = false;
@@ -103,6 +123,42 @@ function openBlurTool() {
   }
   $('[data-strip]').onchange = () => { renderNote(); dirty(); };
   renderNote();
+
+  const targetKB = () => { const v = parseFloat($('[data-target]').value); return v > 0 ? v : 0; };
+  $('[data-fmt]').value = outType;
+  function syncOutput() {
+    const png = outType === 'image/png';
+    $('[data-q]').disabled = png; $('[data-target]').disabled = png;
+    $('[data-qv]').textContent = png ? '—' : $('[data-q]').value;
+    renderNote(); dirty();
+  }
+  $('[data-fmt]').onchange = (e) => { outType = e.target.value; syncOutput(); };
+  $('[data-q]').oninput = $('[data-target]').oninput = syncOutput;
+  syncOutput();
+  function showSize(blob, reached) {
+    const o = state.imageQueue[state.queueIndex]?.file.size, el = $('[data-size]');
+    el.classList.remove('hidden');
+    el.textContent = (o ? `Original ${formatBytes(o)} → ` : 'Saved size: ') + formatBytes(blob.size)
+      + (reached ? '' : ` · Smallest possible: ${formatBytes(blob.size)}`);
+  }
+  // Desktop only: re-render and encode shortly after the last change; runs are serialized and never outlive the modal.
+  function queueReadout() {
+    if (isTouch || closed || !base) return;
+    clearTimeout(roT); roT = setTimeout(runReadout, 500);
+  }
+  async function runReadout() {
+    if (closed) return;
+    if (roRunning) { roAgain = true; return; }
+    roRunning = true;
+    try {
+      do {
+        roAgain = false;
+        const r = await exportBlob();
+        if (!closed && !roAgain && r.blob) showSize(r.blob, r.reached);
+      } while (roAgain && !closed);
+    } catch { /* the readout is best-effort */ }
+    roRunning = false;
+  }
 
   const layerFor = (f) => layers[f] ||= effectLayer(f, base, strength());
   const maskFor = (f) => masks[f] ||= mk(pw, ph);
@@ -206,8 +262,8 @@ function openBlurTool() {
   const end = () => { drawing = false; };
   cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
 
-  // Full-resolution render. Canvases are released as soon as they're consumed to keep peak memory low.
-  async function exportBlob() {
+  // Full-resolution render of the final composite. Intermediate canvases are released as soon as they're consumed.
+  async function renderFinal() {
     const k = Math.min(1, EXPORT_MAX / Math.max(img.naturalWidth, img.naturalHeight));
     const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
     const orig = mk(w, h);
@@ -234,14 +290,33 @@ function openBlurTool() {
       out = effectLayer(fx, orig, strength());
       release(orig);
     }
-    const blob = await new Promise(r => out.toBlob(r, outType, 0.92));
-    release(out);
-    if (!blob || strip() || !fromJpeg || outType !== 'image/jpeg') return { blob, kept: false };
+    return out;
+  }
+
+  // Encode the final canvas, re-injecting the original's EXIF when the user chose to keep it.
+  async function encode(canvas, type, q) {
+    const blob = await new Promise(r => canvas.toBlob(r, type, q));
+    if (!blob || strip() || !fromJpeg || type !== 'image/jpeg') return { blob, kept: false };
     dropped = false;
     const seg = extractExifSegment(new Uint8Array(state.currentBuffer));
     const safe = seg && sanitizeExifSegment(seg);
     if (!safe) { dropped = !!seg; renderNote(); return { blob, kept: false }; }
-    return { blob: new Blob([injectExifSegment(new Uint8Array(await blob.arrayBuffer()), safe)], { type: outType }), kept: true };
+    return { blob: new Blob([injectExifSegment(new Uint8Array(await blob.arrayBuffer()), safe)], { type }), kept: true };
+  }
+
+  // Renders once, then encodes at the slider quality, or searches for the best quality under the target size.
+  async function exportBlob() {
+    const type = outType, canvas = await renderFinal();
+    try {
+      let q = +$('[data-q]').value / 100, reached = true;
+      const kb = targetKB();
+      if (kb && type !== 'image/png') {
+        const r = await findQualityForTarget(async (qq) => (await encode(canvas, type, qq)).blob?.size ?? Infinity, kb * 1024);
+        q = r.quality; reached = r.reached;
+      }
+      const { blob, kept } = await encode(canvas, type, q);
+      return { blob, kept, reached };
+    } finally { release(canvas); }
   }
 
   function saveFile(file) {
@@ -272,9 +347,10 @@ function openBlurTool() {
     dl.disabled = true; dl.textContent = 'Processing…';
     await new Promise(r => setTimeout(r, 30)); // let the label paint before the heavy work
     try {
-      const { blob } = await exportBlob();
+      const type = outType, { blob, reached } = await exportBlob();
       if (!blob) throw new Error('empty');
-      await deliver(new File([blob], `${origName}-blurred.${outExt}`, { type: outType }));
+      if (!closed) showSize(blob, reached);
+      await deliver(new File([blob], `${origName}-blurred.${EXT[type]}`, { type }));
     } catch {
       alert('Could not export the image. It may be too large for this device.');
     } finally {
@@ -297,6 +373,7 @@ function openBlurTool() {
       renderNote();
     }
     render();
+    queueReadout();
   };
   img.onerror = () => { close(); alert('Could not load image.'); };
   img.src = src;
