@@ -13,3 +13,7 @@ test('kept variant', () =>
   assert.equal(describeMetadata(r('GPS', 'Camera', 'Flash'), true), 'Kept: GPS location, camera, 1 other field.'));
 test('camera only', () => assert.equal(describeMetadata(r('Camera'), false), 'Removed: camera.'));
 test('GPS only', () => assert.equal(describeMetadata(r('GPS'), true), 'Kept: GPS location.'));
+test('structural rows are ignored', () => {
+  assert.equal(describeMetadata(r('JFIF Version', 'Encoding', 'YCbCr Subsampling'), false), 'No metadata found in the original.');
+  assert.equal(describeMetadata(r('JFIF Version', 'Flash'), false), 'Removed: 1 other field.');
+});

@@ -120,10 +120,12 @@ function openBlurTool() {
   const report = (kept) => { if (!closed) $('[data-report]').textContent = describeMetadata(state.currentExifRows, kept); };
   const strip = () => $('[data-strip]').checked;
   const fromJpeg = state.currentMime === 'image/jpeg';
+  const hasExif = fromJpeg && !!extractExifSegment(new Uint8Array(state.currentBuffer));
   let sizeNote = '', dropped = false;
   function renderNote() {
     const msg = strip() ? 'Saved copy has metadata removed.'
       : dropped ? 'The original\'s metadata could not be kept safely, so it was removed.'
+      : fromJpeg && outType === 'image/jpeg' && !hasExif ? 'The original has no camera info or GPS, so there is nothing to keep.'
       : fromJpeg && outType === 'image/jpeg' ? 'Camera info and GPS from the original are kept. The built-in preview is removed, but some camera makers hide extra previews in their own data that may remain.'
       : 'Only JPEG can keep metadata; this file will still be stripped.';
     $('[data-note]').textContent = msg + sizeNote;
