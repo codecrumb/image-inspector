@@ -24,42 +24,47 @@ export function extractExifSegment(jpeg) {
 }
 
 export function sanitizeExifSegment(seg) {
+  if (!seg || seg.length < 22 || !isExif(seg, 0)) return null;
   const out = seg.slice();
-  if (out.length < 22 || !isExif(out, 0)) return out;
   const t = 10, size = out.length - t;
   const v = new DataView(out.buffer, out.byteOffset + t, size);
   const bom = String.fromCharCode(out[t], out[t + 1]);
-  if (bom !== 'II' && bom !== 'MM') return out;
+  if (bom !== 'II' && bom !== 'MM') return null;
   const le = bom === 'II';
-  if (v.getUint16(2, le) !== 42) return out;
+  if (v.getUint16(2, le) !== 42) return null;
   const ifd0 = v.getUint32(4, le);
-  if (ifd0 < 8 || ifd0 + 2 > size) return out;
+  if (ifd0 < 8 || ifd0 + 2 > size) return null;
   const n0 = v.getUint16(ifd0, le);
   const next0 = ifd0 + 2 + n0 * 12;
-  if (next0 + 4 > size) return out;
+  if (next0 + 4 > size) return null;
   for (let i = 0; i < n0; i++) {
     const e = ifd0 + 2 + i * 12;
     if (v.getUint16(e, le) === 0x0112) v.setUint16(e + 8, 1, le);
   }
   const ifd1 = v.getUint32(next0, le);
   v.setUint32(next0, 0, le);
-  if (ifd1 >= 8 && ifd1 + 2 <= size) {
-    const n1 = v.getUint16(ifd1, le);
-    let start = 0, length = 0;
-    for (let i = 0; i < n1; i++) {
-      const e = ifd1 + 2 + i * 12;
-      if (e + 12 > size) break;
-      const tag = v.getUint16(e, le);
-      if (tag === 0x0201) start = v.getUint32(e + 8, le);
-      else if (tag === 0x0202) length = v.getUint32(e + 8, le);
-    }
-    if (start > 0 && start < size) out.fill(0, t + start, t + Math.min(size, start + length));
+  if (ifd1 === 0) return out;
+  if (ifd1 < 8 || ifd1 + 2 > size) return null;
+  const n1 = v.getUint16(ifd1, le);
+  if (ifd1 + 2 + n1 * 12 > size) return null;
+  let start = 0, length = 0;
+  for (let i = 0; i < n1; i++) {
+    const e = ifd1 + 2 + i * 12;
+    const tag = v.getUint16(e, le);
+    if (tag !== 0x0201 && tag !== 0x0202) continue;
+    const val = v.getUint16(e + 2, le) === 3 ? v.getUint16(e + 8, le) : v.getUint32(e + 8, le);
+    if (tag === 0x0201) start = val; else length = val;
+  }
+  if (start > 0 && start < size) {
+    const end = length > 0 && start + length <= size ? start + length : size;
+    out.fill(0, t + start, t + end);
   }
   return out;
 }
 
 export function injectExifSegment(jpeg, seg) {
   if (jpeg.length < 2 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) return jpeg;
+  if (!seg || seg.length < 18 || seg.length > 65537 || !isExif(seg, 0)) return jpeg.slice();
   const keep = [jpeg.subarray(0, 2)];
   let at = 2, pos = 2;
   for (const [off, len, marker] of segments(jpeg)) {

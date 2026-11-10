@@ -5,7 +5,7 @@ import { extractExifSegment, sanitizeExifSegment, injectExifSegment } from '../s
 const THUMB = [0xff, 0xd8, 0xaa, 0xbb];
 
 // TIFF: header, IFD0 {orientation, ifd1 link}, IFD1 {0x0201, 0x0202}, thumbnail
-function buildExif(le, orientation = 6, withThumb = true) {
+function buildExif(le, orientation = 6, withThumb = true, { short = false, noLen = false } = {}) {
   const tiff = new Uint8Array(8 + 2 + 12 + 4 + 2 + 24 + 4 + THUMB.length);
   const v = new DataView(tiff.buffer);
   tiff.set([le ? 0x49 : 0x4d, le ? 0x49 : 0x4d]);
@@ -17,8 +17,8 @@ function buildExif(le, orientation = 6, withThumb = true) {
   v.setUint32(22, withThumb ? ifd1 : 0, le);
   const thumbOff = ifd1 + 2 + 24 + 4;
   v.setUint16(ifd1, 2, le);
-  v.setUint16(ifd1 + 2, 0x0201, le); v.setUint16(ifd1 + 4, 4, le); v.setUint32(ifd1 + 6, 1, le); v.setUint32(ifd1 + 10, thumbOff, le);
-  v.setUint16(ifd1 + 14, 0x0202, le); v.setUint16(ifd1 + 16, 4, le); v.setUint32(ifd1 + 18, 1, le); v.setUint32(ifd1 + 22, THUMB.length, le);
+  v.setUint16(ifd1 + 2, 0x0201, le); v.setUint16(ifd1 + 4, short ? 3 : 4, le); v.setUint32(ifd1 + 6, 1, le); if (short) v.setUint16(ifd1 + 10, thumbOff, le); else v.setUint32(ifd1 + 10, thumbOff, le);
+  v.setUint16(ifd1 + 14, noLen ? 0x0213 : 0x0202, le); v.setUint16(ifd1 + 16, 4, le); v.setUint32(ifd1 + 18, 1, le); v.setUint32(ifd1 + 22, noLen ? 0 : THUMB.length, le);
   tiff.set(THUMB, thumbOff);
   const body = new Uint8Array(6 + tiff.length);
   body.set([0x45, 0x78, 0x69, 0x66, 0, 0]);
@@ -78,12 +78,33 @@ for (const le of [true, false]) {
   });
 }
 
-test('sanitizeExifSegment: out-of-range thumbnail and garbage do not throw', () => {
+test('sanitizeExifSegment: out-of-range thumbnail offset does not throw', () => {
   const seg = buildExif(true);
   new DataView(seg.buffer).setUint32(10 + 34, 0xfffffff0, true);
-  assert.doesNotThrow(() => sanitizeExifSegment(seg));
-  const junk = new Uint8Array([0xff, 0xe1, 0, 8, 0x45, 0x78, 0x69, 0x66, 0, 0, 1]);
-  assert.deepEqual(sanitizeExifSegment(junk), junk);
+  assert.ok(sanitizeExifSegment(seg));
+});
+
+test('sanitizeExifSegment: malformed segments return null', () => {
+  const bad = (fn) => { const s = buildExif(true); fn(s, new DataView(s.buffer)); return sanitizeExifSegment(s); };
+  assert.equal(bad((s) => { s[10] = 0x58; s[11] = 0x58; }), null);
+  assert.equal(bad((s, v) => v.setUint16(12, 43, true)), null);
+  assert.equal(bad((s, v) => v.setUint32(14, 0xffffff, true)), null);
+  assert.equal(bad((s, v) => v.setUint16(18, 0xffff, true)), null);
+  assert.equal(bad((s, v) => v.setUint32(10 + 22, 0xffffff, true)), null);
+  assert.equal(sanitizeExifSegment(new Uint8Array([0xff, 0xe1, 0, 8, 0x45, 0x78, 0x69, 0x66, 0, 0, 1])), null);
+  assert.equal(sanitizeExifSegment(null), null);
+});
+
+test('sanitizeExifSegment: missing length tag zeroes from thumbnail start', () => {
+  for (const le of [true, false]) {
+    const out = sanitizeExifSegment(buildExif(le, 6, true, { noLen: true }));
+    assert.ok(!out.includes(0xaa) && !out.includes(0xbb));
+  }
+});
+
+test('sanitizeExifSegment: SHORT-typed offset in MM order', () => {
+  const out = sanitizeExifSegment(buildExif(false, 6, true, { short: true }));
+  assert.ok(!out.includes(0xaa) && !out.includes(0xbb));
 });
 
 test('injectExifSegment: round-trips and replaces existing', () => {
@@ -103,4 +124,13 @@ test('injectExifSegment: goes after JFIF APP0; non-JPEG unchanged', () => {
   assert.deepEqual(extractExifSegment(out), seg);
   const png = new Uint8Array([0x89, 0x50]);
   assert.equal(injectExifSegment(png, seg), png);
+});
+
+test('injectExifSegment: invalid or oversize segment returns a copy of the jpeg', () => {
+  const j = bare();
+  for (const seg of [null, new Uint8Array(20), Uint8Array.from({ length: 65538 }, (_, i) => buildExif(true)[i] ?? 0)]) {
+    const out = injectExifSegment(j, seg);
+    assert.deepEqual(out, j);
+    assert.notEqual(out, j);
+  }
 });
