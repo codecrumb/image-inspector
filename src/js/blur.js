@@ -1,6 +1,7 @@
 import { state } from './state.js';
 import { blurCanvas } from './blur-engine.js';
 import { EFFECTS, effectLayer, setBlurImpl } from './effects.js';
+import { extractExifSegment, sanitizeExifSegment, injectExifSegment } from './parsers/jpeg-exif.js';
 
 setBlurImpl(blurCanvas);
 const FX_LABEL = { blur: 'Blur', pixelate: 'Pixelate', solid: 'Solid' };
@@ -54,7 +55,11 @@ function openBlurTool() {
           <button data-undo class="underline hover:text-gray-700 dark:hover:text-gray-200">Undo</button>
           <button data-clear class="underline hover:text-gray-700 dark:hover:text-gray-200">Clear</button>
         </div>
-        <p data-note class="text-[11px] text-gray-400 dark:text-gray-500">Saved copy has metadata (EXIF, GPS) removed.</p>
+        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+          <input data-strip type="checkbox" checked class="accent-indigo-500" />
+          <span>Remove metadata (EXIF, GPS)</span>
+        </label>
+        <p data-note class="text-[11px] text-gray-400 dark:text-gray-500"></p>
         <button data-dl class="w-full py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white transition-colors">Download</button>
       </div>
     </div>`;
@@ -86,6 +91,18 @@ function openBlurTool() {
 
   const strength = () => +$('[data-str]').value;
   const dirty = () => { pendingShare = null; dl.textContent = 'Download'; };
+  const strip = () => $('[data-strip]').checked;
+  const fromJpeg = state.currentMime === 'image/jpeg';
+  let sizeNote = '', dropped = false;
+  function renderNote() {
+    const msg = strip() ? 'Saved copy has metadata removed.'
+      : dropped ? 'The original\'s metadata could not be kept safely, so it was removed.'
+      : fromJpeg && outType === 'image/jpeg' ? 'Camera info and GPS from the original are kept. The built-in preview is removed, but some camera makers hide extra previews in their own data that may remain.'
+      : 'Only JPEG can keep metadata; this file will still be stripped.';
+    $('[data-note]').textContent = msg + sizeNote;
+  }
+  $('[data-strip]').onchange = () => { renderNote(); dirty(); };
+  renderNote();
 
   const layerFor = (f) => layers[f] ||= effectLayer(f, base, strength());
   const maskFor = (f) => masks[f] ||= mk(pw, ph);
@@ -219,7 +236,12 @@ function openBlurTool() {
     }
     const blob = await new Promise(r => out.toBlob(r, outType, 0.92));
     release(out);
-    return blob;
+    if (!blob || strip() || !fromJpeg || outType !== 'image/jpeg') return { blob, kept: false };
+    dropped = false;
+    const seg = extractExifSegment(new Uint8Array(state.currentBuffer));
+    const safe = seg && sanitizeExifSegment(seg);
+    if (!safe) { dropped = !!seg; renderNote(); return { blob, kept: false }; }
+    return { blob: new Blob([injectExifSegment(new Uint8Array(await blob.arrayBuffer()), safe)], { type: outType }), kept: true };
   }
 
   function saveFile(file) {
@@ -250,7 +272,7 @@ function openBlurTool() {
     dl.disabled = true; dl.textContent = 'Processing…';
     await new Promise(r => setTimeout(r, 30)); // let the label paint before the heavy work
     try {
-      const blob = await exportBlob();
+      const { blob } = await exportBlob();
       if (!blob) throw new Error('empty');
       await deliver(new File([blob], `${origName}-blurred.${outExt}`, { type: outType }));
     } catch {
@@ -271,7 +293,8 @@ function openBlurTool() {
     cv.width = pw; cv.height = ph;
     if (long > EXPORT_MAX) {
       const e = EXPORT_MAX / long;
-      $('[data-note]').textContent += ` Large image: saved at ${Math.round(img.naturalWidth * e)}×${Math.round(img.naturalHeight * e)}.`;
+      sizeNote = ` Large image: saved at ${Math.round(img.naturalWidth * e)}×${Math.round(img.naturalHeight * e)}.`;
+      renderNote();
     }
     render();
   };
