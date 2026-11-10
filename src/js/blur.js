@@ -85,7 +85,7 @@ function openBlurTool() {
           </label>
           <span data-rwh class="min-w-[4.5rem]"></span>
           <div class="flex gap-1">
-            ${[[1080, '1080'], [1920, '1920'], [2048, '2048'], [0, 'Original']].map(([v, t]) => `<button type="button" data-rwp="${v}" class="px-2 py-1 rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700">${t}</button>`).join('')}
+            ${[[1080, '1080'], [1920, '1920'], [2048, '2048'], [0, 'Original']].map(([v, t]) => `<button type="button" data-rwp="${v}" aria-pressed="false" aria-label="${v ? `Resize to ${v} pixels wide` : 'Original size'}" class="rwp px-2 py-1 rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700">${t}</button>`).join('')}
           </div>
         </div>
         <p data-rwnote class="hidden text-[11px] text-amber-600 dark:text-amber-400"></p>
@@ -177,21 +177,22 @@ function openBlurTool() {
   $('[data-fmt]').onchange = (e) => { outType = e.target.value; syncOutput(); };
   $('[data-q]').oninput = $('[data-target]').oninput = syncOutput;
   // Resize target as [w, h], or null when the output stays at the current size. Always capped like the export itself.
-  function outSize() {
-    if (!(rw >= 1) || !curW) return null;
-    const s = fitSize(curW, curH, rw, EXPORT_MAX);
-    return s[0] === curW && s[1] === curH ? null : s;
+  function outSize(w = curW, h = curH) {
+    if (!(rw >= 1) || !w) return null;
+    const s = fitSize(w, h, rw, EXPORT_MAX);
+    return s[0] === w && s[1] === h ? null : s;
   }
   function refreshRw() {
     const ok = rw >= 1 && curW, s = ok && fitSize(curW, curH, rw, EXPORT_MAX), o = outSize(), n = $('[data-rwnote]');
     $('[data-rwh]').textContent = ok ? `× ${s[1]} px` : '';
     n.textContent = ok && s[0] !== Math.round(rw) ? `Limited to ${EXPORT_MAX} px on the long side.` : '';
     n.classList.toggle('hidden', !n.textContent);
+    modal.querySelectorAll('[data-rwp]').forEach(b => { const on = +b.dataset.rwp === rw; b.setAttribute('aria-pressed', on); b.classList.toggle('bg-indigo-100', on); b.classList.toggle('dark:bg-indigo-900/50', on); b.classList.toggle('border-indigo-400', on); });
     const [fw, fh] = o || [curW, curH];
     sizeNote = capped ? ` Large image: saved at ${fw}×${fh}.` : '';
     renderNote();
   }
-  function setRw(v) { rw = v >= 1 ? Math.round(v) : 0; refreshRw(); syncOutput(); }
+  function setRw(v) { rw = Number.isFinite(v) && v >= 1 ? Math.round(v) : 0; refreshRw(); syncOutput(); }
   $('[data-rw]').oninput = (e) => setRw(parseFloat(e.target.value));
   modal.querySelectorAll('[data-rwp]').forEach(b => b.onclick = () => { const v = +b.dataset.rwp; $('[data-rw]').value = v || ''; setRw(v); });
   syncOutput();
@@ -444,7 +445,7 @@ function openBlurTool() {
       out = effectLayer(fx, orig, strength());
       release(orig);
     }
-    const o = outSize();
+    const o = outSize(w, h);
     if (o) {
       const r = mk(o[0], o[1]), g = r.getContext('2d');
       g.imageSmoothingQuality = 'high'; g.drawImage(out, 0, 0, o[0], o[1]);
