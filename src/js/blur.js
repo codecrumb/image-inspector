@@ -58,6 +58,7 @@ function openBlurTool() {
   let img, base, blurred, mask, mctx, scratch, pw = 0, ph = 0;
   let mode = 'all', drawing = false, raf = 0, strT = 0;
   const strokes = []; // { w: brush width as a fraction of the long side, pts: [[nx, ny], ...] }
+  const undoStack = []; // each entry: a painted stroke, or { cleared: [...strokes] } so Clear can be undone too
   let pendingShare = null;
 
   const close = () => {
@@ -66,7 +67,10 @@ function openBlurTool() {
     release(base, blurred, mask, scratch, cv);
     modal.remove();
   };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const onKey = (e) => {
+    if (e.key === 'Escape') close();
+    else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && mode === 'brush') { e.preventDefault(); undo(); }
+  };
   document.addEventListener('keydown', onKey);
   $('[data-x]').onclick = close;
   // a stray tap on the backdrop shouldn't throw away painted work
@@ -127,8 +131,18 @@ function openBlurTool() {
   setMode('all');
 
   $('[data-str]').oninput = () => { dirty(); clearTimeout(strT); strT = setTimeout(makeBlur, 60); };
-  $('[data-undo]').onclick = () => { strokes.pop(); repaintMask(); render(); dirty(); };
-  $('[data-clear]').onclick = () => { strokes.length = 0; repaintMask(); render(); dirty(); };
+  function undo() {
+    const last = undoStack.pop();
+    if (!last) return;
+    if (last.cleared) strokes.push(...last.cleared); else strokes.pop();
+    repaintMask(); render(); dirty();
+  }
+  $('[data-undo]').onclick = undo;
+  $('[data-clear]').onclick = () => {
+    if (!strokes.length) return;
+    undoStack.push({ cleared: strokes.splice(0) });
+    repaintMask(); render(); dirty();
+  };
 
   function addPoint(e, s) {
     const r = cv.getBoundingClientRect();
@@ -138,7 +152,7 @@ function openBlurTool() {
     if (mode !== 'brush') return;
     drawing = true; cv.setPointerCapture(e.pointerId);
     const s = { w: $('[data-brush]').value / 100 * 0.5, pts: [] };
-    strokes.push(s); addPoint(e, s); paintStroke(mctx, s, pw, ph); schedule(); dirty();
+    strokes.push(s); undoStack.push(s); addPoint(e, s); paintStroke(mctx, s, pw, ph); schedule(); dirty();
   });
   cv.addEventListener('pointermove', (e) => {
     if (!drawing) return;
