@@ -70,7 +70,7 @@ export function analyzePSD(file, onDone = null) {
     const buffer = e.target.result;
     const psd = parsePSDHeader(buffer);
     if (!psd) {
-      if (onDone) onDone(null); else alert('Could not read PSD header.');
+      if (onDone) onDone(null, 'Could not read this file.'); else alert('Could not read PSD header.');
       return;
     }
     const emptyVisualData = { palette: [], avgColor: null, histR: new Array(256).fill(0),

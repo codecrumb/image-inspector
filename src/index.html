@@ -97,6 +97,12 @@
         <p id="queueLoadingName" class="text-sm text-gray-400 dark:text-gray-500 max-w-xs truncate text-center px-4"></p>
       </div>
 
+      <!-- Error overlay (undecodable file) -->
+      <div id="queueError" class="hidden absolute inset-0 z-10 bg-white/90 dark:bg-gray-800/90 flex flex-col items-center justify-center gap-2 px-4 text-center">
+        <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"/></svg>
+        <p id="queueErrorName" class="text-sm text-gray-600 dark:text-gray-300 max-w-xs truncate"></p>
+        <p id="queueErrorMsg" class="text-sm text-gray-400 dark:text-gray-500 max-w-xs"></p>
+      </div>
 
       <!-- Preview -->
       <div class="flex items-center justify-center bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-700 p-4">

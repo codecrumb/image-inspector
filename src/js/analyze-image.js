@@ -60,7 +60,7 @@ export function analyzeImage(file, onDone = null) {
       const _args = [file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo];
       if (onDone) onDone(_args); else showImageResults(..._args);
     };
-    img.onerror = () => { URL.revokeObjectURL(url); alert('Could not read image dimensions.'); };
+    img.onerror = () => { URL.revokeObjectURL(url); if (onDone) onDone(null, 'Could not read this file.'); else alert('Could not read image dimensions.'); };
     img.src = url;
   };
   reader.readAsArrayBuffer(file);

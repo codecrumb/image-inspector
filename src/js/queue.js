@@ -30,9 +30,12 @@ export function queueFiles(files, sourceUrl = null, existingCacheIds = null) {
       cacheFile(file).then(id => { if (id) slot.cacheId = id; }).catch(() => {});
     }
 
-    analyzeFile(file, sourceUrl, (args) => {
-      slot.status = 'done';
-      slot.result = { type: file.type.startsWith('video/') ? 'video' : 'image', args };
+    analyzeFile(file, sourceUrl, (args, error) => {
+      if (args === null) { slot.status = 'error'; slot.error = error || 'Could not read this file.'; }
+      else {
+        slot.status = 'done';
+        slot.result = { type: file.type.startsWith('video/') ? 'video' : 'image', args };
+      }
       if (state.queueIndex === idx) navigateTo(idx);
       updateQueueNav();
     });
@@ -47,10 +50,18 @@ export function navigateTo(index) {
   ssSaveQueueId(state.imageQueue[index].cacheId);
   const slot    = state.imageQueue[index];
   const loading = document.getElementById('queueLoading');
+  const errBox  = document.getElementById('queueError');
+  errBox.classList.add('hidden');
   if (slot.status === 'analyzing') {
     document.getElementById('results').classList.remove('hidden');
     document.getElementById('queueLoadingName').textContent = slot.file.name;
     loading.classList.remove('hidden');
+  } else if (slot.status === 'error') {
+    loading.classList.add('hidden');
+    document.getElementById('queueErrorName').textContent = slot.file.name;
+    document.getElementById('queueErrorMsg').textContent  = slot.error;
+    document.getElementById('results').classList.remove('hidden');
+    errBox.classList.remove('hidden');
   } else if (slot.status === 'done') {
     loading.classList.add('hidden');
     const { type, args } = slot.result;
