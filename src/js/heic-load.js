@@ -6,7 +6,10 @@ export function loadHeicDecoder() {
   pending ||= new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = __HEIC_JS__;
-    s.onload = () => resolve(window.__heicDecode);
+    s.onload = () => {
+      if (typeof window.__heicDecode === 'function') resolve(window.__heicDecode);
+      else { pending = null; reject(new Error('Could not load the HEIC decoder')); }
+    };
     s.onerror = () => { s.remove(); reject(new Error('Could not load the HEIC decoder')); };
     document.head.appendChild(s);
   }).catch((e) => { pending = null; throw e; });

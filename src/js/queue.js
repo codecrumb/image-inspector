@@ -2,16 +2,19 @@ import { state } from './state.js';
 import { analyzePSD } from './parsers/image-format.js';
 import { analyzeImage, showImageResults } from './analyze-image.js';
 import { analyzeVideo, showVideoResults } from './analyze-video.js';
+import { isHeicFile } from './parsers/heic.js';
+import { analyzeHeic } from './analyze-heic.js';
 import { cacheFile, ssSaveQueueId } from './opfs-cache.js';
 
 
 // ── File routing ──────────────────────────────────────────────────────────
-function analyzeFile(file, sourceUrl = null, onDone = null) {
+function analyzeFile(file, sourceUrl = null, onDone = null, onUpgrade = null) {
   if (!file) return;
   state.currentSourceUrl = sourceUrl;
   const psdMimes = ['image/vnd.adobe.photoshop', 'image/x-photoshop', 'image/photoshop', 'application/x-photoshop', 'application/photoshop'];
   const looksLikePSD = psdMimes.includes(file.type.toLowerCase()) || /\.ps[db]$/i.test(file.name);
-  if (looksLikePSD) analyzePSD(file, onDone);
+  if (isHeicFile(file)) analyzeHeic(file, onDone, onUpgrade);
+  else if (looksLikePSD) analyzePSD(file, onDone);
   else if (file.type.startsWith('image/')) analyzeImage(file, onDone);
   else if (file.type.startsWith('video/')) analyzeVideo(file, onDone);
 }
@@ -35,9 +38,13 @@ export function queueFiles(files, sourceUrl = null, existingCacheIds = null) {
       else {
         slot.status = 'done';
         slot.result = { type: file.type.startsWith('video/') ? 'video' : 'image', args };
+        if (isHeicFile(file)) slot.result.previewBlob = null; // the .heic itself can't be previewed
       }
       if (state.queueIndex === idx) navigateTo(idx);
       updateQueueNav();
+    }, (args, previewBlob) => {
+      slot.result = { type: 'image', args, previewBlob };
+      if (state.queueIndex === idx) navigateTo(idx);
     });
   });
   if (state.imageQueue.length > 0) navigateTo(firstNewIdx);
@@ -69,7 +76,8 @@ export function navigateTo(index) {
       // args[1] is the blob URL, which may have been revoked when we last navigated away.
       // Recreate it from the still-valid File object (args[0]).
       if (args[1]) URL.revokeObjectURL(args[1]);
-      args[1] = args[0] ? URL.createObjectURL(args[0]) : null;
+      const pb = slot.result.previewBlob; // set (Blob or null) for HEIC, whose file can't be shown directly
+      args[1] = pb !== undefined ? (pb && URL.createObjectURL(pb)) : args[0] ? URL.createObjectURL(args[0]) : null;
       showImageResults(...args);
     } else {
       showVideoResults(...args);

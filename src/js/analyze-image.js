@@ -6,6 +6,7 @@ import { extractVisualData } from './parsers/visual-data.js';
 import { checkSteganography, runAppendedDataScan } from './stego.js';
 import { aspectRatio, formatBytes, formatMegapixels, formatMimeType } from './util.js';
 import { renderVisualAnalysis } from './visual.js';
+import { isHeicFile } from './parsers/heic.js';
 import { renderExif, runExifrEnrichment } from './exif-render.js';
 
 
@@ -66,7 +67,7 @@ export function analyzeImage(file, onDone = null) {
   reader.readAsArrayBuffer(file);
 }
 
-export function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo = null) {
+export function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo = null, previewState = null) {
   state.currentFileType = 'image';
   document.getElementById('lensBtn').classList.remove('hidden');
   document.getElementById('blurBtn').classList.toggle('hidden', !url);
@@ -91,6 +92,9 @@ export function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData,
   if (preview._prevURL) URL.revokeObjectURL(preview._prevURL);
   preview._prevURL = url;
   document.getElementById('videoThumb').classList.add('hidden');
+  const status = document.getElementById('previewStatus');
+  status.textContent = previewState === 'decoding' ? 'Decoding preview…' : previewState === 'unavailable' ? 'Preview unavailable' : '';
+  status.classList.toggle('hidden', !previewState);
   if (url) {
     preview.src = url;
     preview.classList.remove('hidden');
@@ -183,5 +187,5 @@ export function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData,
   renderVisualAnalysis(visualData);
   renderExif(exifRows);
   document.getElementById('results').classList.remove('hidden');
-  if (url) runExifrEnrichment(file);
+  if (url || isHeicFile(file)) runExifrEnrichment(file);
 }

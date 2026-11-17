@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import { isTouch, EXPORT_MAX } from './platform.js';
 import { blurCanvas } from './blur-engine.js';
 import { EFFECTS, effectLayer, setBlurImpl } from './effects.js';
 import { findQualityForTarget } from './output.js';
@@ -13,9 +14,7 @@ const FX_LABEL = { blur: 'Blur', pixelate: 'Pixelate', solid: 'Solid' };
 // ── Blur & Download (built lazily on first use) ───────────────────────────
 // The preview runs on a downscaled copy; strokes are stored in normalized coordinates and replayed
 // at export size, so the saved file is blurred at full resolution without keeping big canvases alive.
-const isTouch = matchMedia('(pointer: coarse)').matches;
 const PREVIEW_MAX = 1600;
-const EXPORT_MAX = isTouch ? 3072 : 4096; // phones run out of canvas memory above this
 
 const mk = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
 const release = (...cs) => cs.forEach(c => { if (c) c.width = c.height = 0; });
