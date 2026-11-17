@@ -56,7 +56,7 @@ async function buildAll() {
   writeFileSync(p('dist/index.html'), fill({
     HEAD_LINKS: `${iconLinks}\n  <link rel="preload" href="${cssName}" as="style" />\n  <link rel="stylesheet" href="${cssName}" />`,
     CSS: '',
-    FOOTER: '<footer class="mt-6 text-xs text-gray-400 dark:text-gray-500 text-center"><a href="image-inspector.html" download="image-inspector.html" class="underline hover:text-gray-600 dark:hover:text-gray-300">Download the full page</a> to use it offline</footer>',
+    FOOTER: '<footer class="mt-6 text-xs text-gray-400 dark:text-gray-500 text-center"><a href="image-inspector.html" download="image-inspector.html" class="underline hover:text-gray-600 dark:hover:text-gray-300">Download the full page</a> to use it offline. <a href="licenses.txt" class="underline hover:text-gray-600 dark:hover:text-gray-300">Licenses</a></footer>',
     JS: `<script src="${jsName}" defer></script>`,
   }));
 

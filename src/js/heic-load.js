@@ -2,7 +2,7 @@
 let pending;
 
 export function loadHeicDecoder() {
-  if (__HEIC_JS__ === null) return Promise.reject(new Error('HEIC needs the hosted version'));
+  if (__HEIC_JS__ === null) return Promise.reject(Object.assign(new Error('HEIC needs the hosted version'), { code: 'hosted-only' }));
   pending ||= new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = __HEIC_JS__;

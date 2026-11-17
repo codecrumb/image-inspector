@@ -69,7 +69,7 @@ export function analyzeImage(file, onDone = null) {
 
 export function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData, buffer, qualityInfo, bitDepthInfo, orientationInfo = null, previewState = null) {
   state.currentFileType = 'image';
-  document.getElementById('lensBtn').classList.remove('hidden');
+  document.getElementById('lensBtn').classList.toggle('hidden', !url);
   document.getElementById('blurBtn').classList.toggle('hidden', !url);
   state.currentExifRows = exifRows;
   state.currentPalette  = visualData.palette;
