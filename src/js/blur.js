@@ -44,8 +44,8 @@ function openBlurTool() {
       </div>
       <div class="p-4 space-y-3 border-t border-gray-200 dark:border-gray-700 overflow-y-auto min-h-0">
         <div class="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 text-sm">
-          <button data-mode="all" class="flex-1 py-1.5 font-medium">Whole image</button>
           <button data-mode="brush" class="flex-1 py-1.5 font-medium">Paint areas</button>
+          <button data-mode="all" class="flex-1 py-1.5 font-medium">Whole image</button>
         </div>
         <div class="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 text-sm">
           ${EFFECTS.map(f => `<button data-fx="${f}" class="flex-1 py-1.5 font-medium">${FX_LABEL[f]}</button>`).join('')}
@@ -123,7 +123,7 @@ function openBlurTool() {
   let rw = 0; // requested output width; 0 = Original
   let curW = 0, curH = 0, capW = 0, capH = 0, capped = false; // full-resolution size after ops (EXPORT_MAX cap applied first)
   const layers = {}, masks = {}; // per-effect preview layer and stroke mask, built lazily
-  let mode = 'all', fx = 'blur', drawing = false, raf = 0, strT = 0;
+  let mode = 'brush', fx = 'blur', drawing = false, raf = 0, strT = 0;
   const strokes = []; // { w: brush width as a fraction of the long side, fx, pts: [[nx, ny], ...] }
   const undoStack = []; // each entry: a painted stroke, { cleared: [...strokes] } so Clear can be undone too, or { geom, op, before: strokes }
   let cropping = false, crop = null, cropDrag = null, ov, box; // crop: normalized { x, y, w, h } or null
@@ -366,7 +366,7 @@ function openBlurTool() {
     if (base) render();
   }
   modal.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
-  setMode('all');
+  setMode('brush');
 
   function setFx(f) {
     fx = f;
