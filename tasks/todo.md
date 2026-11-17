@@ -53,3 +53,14 @@ Plan: ~/.claude/plans/jiggly-imagining-comet.md (branch: feat/blur-download)
 - E2E (Playwright Chromium over `dist/` served over http, script in the session scratchpad), all pass: (a) metadata shows instantly while the decoder request is held, status "Decoding preview…", preview and Blur hidden; (b) HEIC then preview, palette, histogram, Blur button; (c) second HEIC in a queue; (d) corrupt HEIC shows "Preview unavailable", no spinner, metadata stays; (e) switching HEIC to PNG to HEIC; (f) PNG opened while a HEIC decode is held is not overwritten by the late result. Blur & Download on a decoded HEIC exports `sample-blurred.png`. No page errors.
 - Standalone (`dist/image-inspector.html` over `file://`, Chromium): metadata shows (64 x 48), `#previewStatus` reads "HEIC needs the hosted version", no network requests, no spinner. Fix in this task: the hosted-version rejection is mapped to the `hosted-only` preview state instead of the generic "Preview unavailable".
 - NOT tested: real Linux Chromium / Omarchy, any real iPhone or phone, large real-camera HEIC files (only the 64x48 fixture; memory and decode time unmeasured), multi-image / burst HEIC (only the primary image is decoded). libheif is LGPL: the license/attribution obligation for shipping the wasm still needs a deliberate check before release.
+
+# Color probes (annotate with RGB)
+
+Inspired by image-annotation-studio (points/rects stored relative to the original image, CSV export), but scoped to color: pin probes in the lightbox, read RGB/hex/HSL, export CSV.
+
+- [x] 1. `src/js/probes.js` pure maths (hex, HSL, region average, CSV) + `tests/probes.test.mjs`
+- [x] 2. Lightbox "Probe" mode: click pins a point, drag pins a region (average color); overlay + side panel with labels, delete, Copy/Download CSV
+- [x] 3. Verify in browser, update AGENTS.md
+
+## Review
+- Pure maths: 6 new tests, 53 pass. Chromium (Playwright) on a half red/half blue PNG: point = #ff0000, region average = #800080, lightbox stays open after a drag, CSV copied with escaped label. Not tested on a real touch device (uses pointer events + touch-action:none). Uncommitted.
