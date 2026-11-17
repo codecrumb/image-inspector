@@ -10,5 +10,8 @@
     "esbuild": "^0.28.2",
     "tailwindcss": "^4.2.2"
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "libheif-js": "1.23.5"
+  }
 }
