@@ -93,7 +93,7 @@ export function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData,
   preview._prevURL = url;
   document.getElementById('videoThumb').classList.add('hidden');
   const status = document.getElementById('previewStatus');
-  status.textContent = previewState === 'decoding' ? 'Decoding preview…' : previewState === 'unavailable' ? 'Preview unavailable' : '';
+  status.textContent = { decoding: 'Decoding preview…', unavailable: 'Preview unavailable', 'hosted-only': 'HEIC needs the hosted version' }[previewState] || '';
   status.classList.toggle('hidden', !previewState);
   if (url) {
     preview.src = url;

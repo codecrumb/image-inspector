@@ -32,7 +32,7 @@ export function analyzeHeic(file, onDone, onUpgrade) {
       canvas.width = canvas.height = 0;
       if (!blob) throw new Error('encode failed');
       onUpgrade(args(null, visual, null), blob);
-    }).catch((err) => { console.warn('HEIC preview failed:', err); onUpgrade(args(null, EMPTY_VISUAL(), 'unavailable'), null); });
+    }).catch((err) => { console.warn('HEIC preview failed:', err); onUpgrade(args(null, EMPTY_VISUAL(), err?.message === 'HEIC needs the hosted version' ? 'hosted-only' : 'unavailable'), null); });
   };
   reader.readAsArrayBuffer(file);
 }
