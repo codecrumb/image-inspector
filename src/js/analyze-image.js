@@ -117,7 +117,7 @@ export function showImageResults(file, url, w, h, dpiInfo, exifRows, visualData,
   document.getElementById('cell-bitrate').classList.add('hidden');
   document.getElementById('cell-fps').classList.add('hidden');
 
-  document.getElementById('stat-format').textContent = formatMimeType(file.type);
+  document.getElementById('stat-format').textContent = isHeicFile(file) && !/^image\/hei[cf]$/i.test(file.type) ? 'HEIC' : formatMimeType(file.type);
   document.getElementById('stat-size').textContent   = formatBytes(file.size);
   const sizeSub = document.getElementById('stat-size-sub');
   if (file.size >= 1024) {

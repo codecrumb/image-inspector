@@ -60,6 +60,7 @@ export function showVideoResults(file, canvas, w, h, duration, fps, visualData) 
   const preview = document.getElementById('preview');
   if (preview._prevURL) { URL.revokeObjectURL(preview._prevURL); preview._prevURL = null; }
   preview.classList.add('hidden');
+  document.getElementById('previewStatus').classList.add('hidden');
   canvas.classList.remove('hidden');
 
   document.getElementById('cell-pixels').classList.add('hidden');
